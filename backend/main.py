@@ -104,7 +104,7 @@ async def refresh_discover():
                 ch_id = int(ch_id_str)
                 chat = await client.get_chat(ch_id)
                 files = []
-                async for msg in client.get_chat_history(ch_id, limit=5000):
+                async for msg in client.get_chat_history(ch_id, limit=10000):
                     media = (getattr(msg, "document", None) or
                              getattr(msg, "video", None) or
                              getattr(msg, "audio", None))
@@ -269,11 +269,13 @@ async def get_user_chats(client: Client = Depends(get_user_client)):
     return {"chats": chats}
 
 @app.get("/api/chats/{chat_id}/files")
-async def get_chat_files(chat_id: int, type: str = None,
+async def get_chat_files(chat_id: int, request: Request, type: str = None,
                          client: Client = Depends(get_user_client)):
     files = []
+    offset = 0
+    limit = int(request.query_params.get("limit", "2000"))
     try:
-        async for msg in client.get_chat_history(chat_id, limit=1000):
+        async for msg in client.get_chat_history(chat_id, limit=limit):
             media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
             if not media:
                 if msg.photo and (not type or type == "image"):
