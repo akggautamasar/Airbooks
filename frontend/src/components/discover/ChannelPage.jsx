@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { ArrowLeft, Film, Music, Image, FileText, BookOpen, Search,
-         Play, Download, ExternalLink, Clock, AlignJustify, ArrowUpDown } from 'lucide-react';
+         Play, ExternalLink, Clock, AlignJustify, SortAsc } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useApp } from '../../store/AppContext';
 
@@ -19,97 +19,219 @@ function fmtSize(b) {
   return (b/1e3).toFixed(0)+' KB';
 }
 
-// Opens Fast Player (proven working)
-function openFastPlayer(streamUrl, name, id) {
-  const backendBase = (import.meta.env.VITE_API_URL||'').replace(/\/api$/,'');
-  window.open(`${backendBase}/player?url=${encodeURIComponent(streamUrl)}&name=${encodeURIComponent(name)}&id=${encodeURIComponent(id)}`, '_blank');
+function fmtDur(s) {
+  if (!s) return '';
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  return `${m}:${String(sec).padStart(2,'0')}`;
 }
 
-// Opens AirPlayer (BeyondDrive)
-function openAirPlayer(streamUrl, name) {
-  const backendBase = (import.meta.env.VITE_API_URL||'').replace(/\/api$/,'');
-  window.open(`${backendBase}/air-player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(name)}`, '_blank');
+// Lazy-loading image with skeleton
+function LazyThumb({ src, alt, style, fallback }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(([e]) => { if(e.isIntersecting){ setVisible(true); obs.disconnect(); } }, { rootMargin: '200px' });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} style={{ ...style, overflow:'hidden', position:'relative', background:'#e5e5ea' }}>
+      {!loaded && !errored && (
+        <div style={{ position:'absolute', inset:0, background:'linear-gradient(90deg,#e5e5ea 25%,#f0f0f5 50%,#e5e5ea 75%)', backgroundSize:'200% 100%', animation:'shimmer 1.5s infinite' }} />
+      )}
+      {visible && !errored && (
+        <img src={src} alt={alt}
+          style={{ width:'100%', height:'100%', objectFit:'cover', opacity: loaded?1:0, transition:'opacity 0.2s' }}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErrored(true)} />
+      )}
+      {errored && fallback}
+    </div>
+  );
 }
 
-// Opens PDF+EPUB viewer (BeyondDrive)
-function openPdfViewer(streamUrl, name, type) {
-  const backendBase = (import.meta.env.VITE_API_URL||'').replace(/\/api$/,'');
-  const mode = type === 'epub' ? 'epub' : 'pdf';
-  window.open(`${backendBase}/pdf-viewer?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(name)}&mode=${mode}`, '_blank');
+function VideoCard({ file, source, onClick }) {
+  const thumbUrl = file.has_thumb ? api.thumbUrl(source, file.channel_id, file.msg_id) : null;
+  const dur = fmtDur(file.duration);
+  const size = fmtSize(file.size);
+  return (
+    <div onClick={onClick} style={{ background:'white', borderRadius:'14px', overflow:'hidden',
+                                    boxShadow:'0 1px 4px rgba(0,0,0,0.08)', cursor:'pointer' }}>
+      <div style={{ aspectRatio:'16/9', position:'relative', background:'#1c1c2e' }}>
+        {thumbUrl ? (
+          <LazyThumb src={thumbUrl} alt={file.name}
+            style={{ width:'100%', height:'100%' }}
+            fallback={<div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}><Play size={24} color="rgba(255,255,255,0.4)" /></div>} />
+        ) : (
+          <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', background:'linear-gradient(135deg,#1c1c3a,#2c2c54)' }}>
+            <Film size={24} color="rgba(255,255,255,0.3)" />
+          </div>
+        )}
+        {/* Overlay badges */}
+        <div style={{ position:'absolute', inset:0, background:'linear-gradient(transparent 40%,rgba(0,0,0,0.7))', pointerEvents:'none' }} />
+        <div style={{ position:'absolute', bottom:'6px', left:'6px', display:'flex', gap:'4px', flexWrap:'wrap' }}>
+          {size && <span style={{ background:'rgba(0,0,0,0.75)', color:'white', fontSize:'10px', padding:'2px 6px', borderRadius:'5px', fontWeight:'600' }}>{size}</span>}
+        </div>
+        {dur && <span style={{ position:'absolute', bottom:'6px', right:'6px', background:'rgba(0,0,0,0.75)', color:'white', fontSize:'10px', padding:'2px 6px', borderRadius:'5px', fontWeight:'700' }}>{dur}</span>}
+        <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ width:'36px', height:'36px', borderRadius:'50%', background:'rgba(255,255,255,0.15)', backdropFilter:'blur(4px)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <Play size={16} color="white" fill="white" />
+          </div>
+        </div>
+      </div>
+      <div style={{ padding:'8px 10px' }}>
+        <p style={{ fontSize:'12px', fontWeight:'600', color:'#1c1c1e', margin:0, overflow:'hidden',
+                    display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:'1.4' }}>
+          {file.name.replace(/\.[^.]+$/,'')}
+        </p>
+        {file.caption && (
+          <p style={{ fontSize:'11px', color:'#8e8e93', margin:'3px 0 0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {file.caption}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AudioCard({ file, source, onClick }) {
+  const thumbUrl = file.has_thumb ? api.thumbUrl(source, file.channel_id, file.msg_id) : null;
+  const dur = fmtDur(file.duration);
+  const size = fmtSize(file.size);
+  return (
+    <button onClick={onClick}
+      style={{ display:'flex', alignItems:'center', gap:'12px', background:'white',
+               borderRadius:'14px', padding:'10px 12px', border:'none', cursor:'pointer',
+               boxShadow:'0 1px 3px rgba(0,0,0,0.08)', textAlign:'left', width:'100%' }}>
+      {/* Album art */}
+      <div style={{ width:'52px', height:'52px', borderRadius:'10px', flexShrink:0, overflow:'hidden', background:'#34c75918', position:'relative' }}>
+        {thumbUrl ? (
+          <LazyThumb src={thumbUrl} alt={file.name} style={{ width:'100%', height:'100%' }}
+            fallback={<div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}><Music size={22} color="#34c759" /></div>} />
+        ) : (
+          <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <Music size={22} color="#34c759" />
+          </div>
+        )}
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <p style={{ fontSize:'14px', fontWeight:'600', color:'#1c1c1e', margin:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {file.name.replace(/\.[^.]+$/,'')}
+        </p>
+        <div style={{ display:'flex', gap:'6px', marginTop:'4px', flexWrap:'wrap' }}>
+          {size && <span style={{ fontSize:'11px', color:'#8e8e93', background:'#f2f2f7', padding:'2px 6px', borderRadius:'5px', fontWeight:'600' }}>{size}</span>}
+          {dur && <span style={{ fontSize:'11px', color:'#34c759', background:'#34c75915', padding:'2px 6px', borderRadius:'5px', fontWeight:'700' }}>{dur}</span>}
+        </div>
+        {file.caption && <p style={{ fontSize:'11px', color:'#8e8e93', margin:'2px 0 0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.caption}</p>}
+      </div>
+      <Play size={15} color="#c7c7cc" />
+    </button>
+  );
+}
+
+function ImageCard({ file, source, onClick }) {
+  const src = api.streamUrl(source, file.channel_id, file.msg_id);
+  const size = fmtSize(file.size);
+  return (
+    <div onClick={onClick} style={{ background:'white', borderRadius:'12px', overflow:'hidden',
+                                    boxShadow:'0 1px 4px rgba(0,0,0,0.08)', cursor:'pointer' }}>
+      <LazyThumb src={src} alt={file.name}
+        style={{ width:'100%', aspectRatio:'1' }}
+        fallback={<div style={{ width:'100%', aspectRatio:'1', display:'flex', alignItems:'center', justifyContent:'center' }}><Image size={20} color="#ccc" /></div>} />
+      {(size || file.caption) && (
+        <div style={{ padding:'5px 7px' }}>
+          {size && <span style={{ fontSize:'10px', color:'#8e8e93', fontWeight:'600' }}>{size}</span>}
+          {file.caption && <p style={{ fontSize:'10px', color:'#1c1c1e', margin:'1px 0 0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.caption}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocCard({ file, source, tab, onClick }) {
+  const t = TABS.find(t=>t.key===tab);
+  const Icon = t?.icon || FileText;
+  const color = t?.color || '#8e8e93';
+  const size = fmtSize(file.size);
+  return (
+    <button onClick={onClick}
+      style={{ display:'flex', alignItems:'center', gap:'12px', background:'white',
+               borderRadius:'14px', padding:'12px 14px', border:'none', cursor:'pointer',
+               boxShadow:'0 1px 3px rgba(0,0,0,0.08)', textAlign:'left', width:'100%' }}>
+      <div style={{ width:'44px', height:'44px', borderRadius:'10px', flexShrink:0,
+                    background:color+'18', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <Icon size={22} color={color} />
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <p style={{ fontSize:'14px', fontWeight:'600', color:'#1c1c1e', margin:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {file.name.replace(/\.[^.]+$/,'')}
+        </p>
+        <div style={{ display:'flex', gap:'6px', marginTop:'3px', alignItems:'center', flexWrap:'wrap' }}>
+          {size && <span style={{ fontSize:'11px', color:'#8e8e93', background:'#f2f2f7', padding:'2px 6px', borderRadius:'5px', fontWeight:'600' }}>{size}</span>}
+          {file.caption && <span style={{ fontSize:'11px', color:'#8e8e93', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'150px' }}>{file.caption}</span>}
+        </div>
+      </div>
+      <ExternalLink size={14} color="#c7c7cc" />
+    </button>
+  );
 }
 
 function ViewerSheet({ file, source, onClose }) {
   if (!file) return null;
   const streamUrl = api.streamUrl(source, file.channel_id, file.msg_id);
   const backendBase = (import.meta.env.VITE_API_URL||'').replace(/\/api$/,'');
-
   let options = [];
   if (file.type === 'video') {
     options = [
       { emoji:'⚡', label:'Fast Player', sub:'Speed, seek, resume — recommended', highlight:true,
-        action:()=>{ openFastPlayer(streamUrl, file.name, file.id); onClose(); } },
+        action:()=>{ window.open(`${backendBase}/player?url=${encodeURIComponent(streamUrl)}&name=${encodeURIComponent(file.name)}&id=${encodeURIComponent(file.id)}`, '_blank'); onClose(); } },
       { emoji:'🎬', label:'AirPlayer', sub:'BeyondDrive player',
-        action:()=>{ openAirPlayer(streamUrl, file.name); onClose(); } },
-      { emoji:'🌐', label:'Open in Browser', sub:'Stream directly in Chrome',
+        action:()=>{ window.open(`${backendBase}/air-player?url=${encodeURIComponent(streamUrl)}&name=${encodeURIComponent(file.name)}&title=${encodeURIComponent(file.name)}`, '_blank'); onClose(); } },
+      { emoji:'🌐', label:'Open in Browser', sub:'Stream in Chrome',
         action:()=>{ window.open(streamUrl,'_blank'); onClose(); } },
       { emoji:'⬇', label:'Download', sub:'Save to device',
         action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
     ];
   } else if (file.type === 'pdf') {
     options = [
-      { emoji:'📄', label:'PDF Viewer', sub:'Built-in PDF.js reader — works for all sizes', highlight:true,
-        action:()=>{ openPdfViewer(streamUrl, file.name, 'pdf'); onClose(); } },
-      { emoji:'🌐', label:'Open in Browser', sub:'Native browser PDF viewer',
+      { emoji:'📄', label:'PDF Viewer', sub:'Built-in PDF.js reader', highlight:true,
+        action:()=>{ window.open(`${backendBase}/pdf-viewer?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(file.name)}&mode=pdf`, '_blank'); onClose(); } },
+      { emoji:'🌐', label:'Open in Browser', sub:'Native PDF viewer',
         action:()=>{ window.open(streamUrl,'_blank'); onClose(); } },
-      { emoji:'⬇', label:'Download', sub:'Save PDF to device',
-        action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
+      { emoji:'⬇', label:'Download', action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
     ];
   } else if (file.type === 'epub') {
     options = [
-      { emoji:'📖', label:'EPUB Reader', sub:'Built-in reader with chapter nav', highlight:true,
-        action:()=>{ openPdfViewer(streamUrl, file.name, 'epub'); onClose(); } },
-      { emoji:'⬇', label:'Download EPUB', sub:'Save to device & open with any reader',
-        action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
-    ];
-  } else if (file.type === 'audio') {
-    options = [
-      { emoji:'🎵', label:'Play Audio', sub:'Built-in audio player', highlight:true,
-        action:()=>{ /* handled by AudioPlayer */ onClose(); } },
-      { emoji:'🌐', label:'Open in Browser', sub:'Stream in browser',
-        action:()=>{ window.open(streamUrl,'_blank'); onClose(); } },
-      { emoji:'⬇', label:'Download', sub:'Save to device',
-        action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
+      { emoji:'📖', label:'EPUB Reader', sub:'Built-in reader', highlight:true,
+        action:()=>{ window.open(`${backendBase}/pdf-viewer?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(file.name)}&mode=epub`, '_blank'); onClose(); } },
+      { emoji:'⬇', label:'Download EPUB', action:()=>{ const a=document.createElement('a'); a.href=streamUrl; a.download=file.name; a.click(); onClose(); } },
     ];
   }
-
   return (
-    <div onClick={onClose}
-      style={{ position:'fixed', inset:0, zIndex:300, background:'rgba(0,0,0,0.45)',
-               display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
+    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:300, background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'flex-end' }}>
       <div onClick={e=>e.stopPropagation()}
-        style={{ background:'white', borderRadius:'20px 20px 0 0', width:'100%', maxWidth:'480px',
-                 padding:'16px 16px calc(env(safe-area-inset-bottom,0px)+16px)',
-                 boxShadow:'0 -4px 24px rgba(0,0,0,0.15)' }}>
+        style={{ background:'white', borderRadius:'20px 20px 0 0', width:'100%',
+                 padding:'16px 16px calc(env(safe-area-inset-bottom,0px)+16px)', boxShadow:'0 -4px 24px rgba(0,0,0,0.15)' }}>
         <div style={{ width:'36px', height:'4px', background:'#e5e5ea', borderRadius:'2px', margin:'0 auto 14px' }} />
-        <p style={{ fontWeight:'700', fontSize:'15px', color:'#1c1c1e', margin:'0 0 3px',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        <p style={{ fontWeight:'700', fontSize:'15px', color:'#1c1c1e', margin:'0 0 2px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {file.name.replace(/\.[^.]+$/,'')}
         </p>
-        <p style={{ fontSize:'12px', color:'#8e8e93', margin:'0 0 14px' }}>
-          {fmtSize(file.size)} · Choose how to open
-        </p>
+        <p style={{ fontSize:'12px', color:'#8e8e93', margin:'0 0 14px' }}>{fmtSize(file.size)}{file.duration?` · ${fmtDur(file.duration)}`:''} · Choose how to open</p>
         {options.map((o,i) => (
           <button key={i} onClick={o.action}
             style={{ width:'100%', display:'flex', alignItems:'center', gap:'12px',
                      background: o.highlight ? '#e8f0ff' : '#f2f2f7',
                      border: o.highlight ? '1.5px solid #3478f640' : '1.5px solid transparent',
-                     borderRadius:'14px', padding:'13px 14px', cursor:'pointer',
-                     textAlign:'left', marginBottom:'8px' }}>
-            <span style={{ fontSize:'22px', flexShrink:0 }}>{o.emoji}</span>
-            <div style={{ flex:1 }}>
-              <p style={{ fontWeight:'700', fontSize:'14px',
-                          color: o.highlight ? '#3478f6' : '#1c1c1e', margin:0 }}>{o.label}</p>
-              <p style={{ fontSize:'12px', color:'#8e8e93', margin:'2px 0 0' }}>{o.sub}</p>
+                     borderRadius:'14px', padding:'12px 14px', cursor:'pointer', textAlign:'left', marginBottom:'8px' }}>
+            <span style={{ fontSize:'20px' }}>{o.emoji}</span>
+            <div>
+              <p style={{ fontWeight:'700', fontSize:'14px', color: o.highlight ? '#3478f6' : '#1c1c1e', margin:0 }}>{o.label}</p>
+              {o.sub && <p style={{ fontSize:'12px', color:'#8e8e93', margin:'1px 0 0' }}>{o.sub}</p>}
             </div>
           </button>
         ))}
@@ -127,13 +249,11 @@ export default function ChannelPage({ channel, source, onBack }) {
   const [sort, setSort] = useState('date');
   const [order, setOrder] = useState('desc');
   const [viewerFile, setViewerFile] = useState(null);
-
-  const fileCache = React.useRef({});
+  const fileCache = useRef({});
 
   useEffect(() => {
     setSearch('');
     const cacheKey = `${channel.id}_${tab}`;
-    // Show cached data instantly if available
     if (fileCache.current[cacheKey]) {
       setFiles(fileCache.current[cacheKey]);
       setLoading(false);
@@ -144,7 +264,7 @@ export default function ChannelPage({ channel, source, onBack }) {
       ? api.getChannelFiles(channel.str_id||String(channel.id), tab)
       : api.getChatFiles(channel.id, tab);
     load.then(r => {
-      const f = r.files || [];
+      const f = r.files||[];
       fileCache.current[cacheKey] = f;
       setFiles(f);
     }).catch(()=>{}).finally(()=>setLoading(false));
@@ -158,25 +278,19 @@ export default function ChannelPage({ channel, source, onBack }) {
     return [...f].sort((a,b) => {
       let cmp = sort==='date' ? (a.date||0)-(b.date||0) :
                 sort==='name' ? a.name.localeCompare(b.name) :
-                (a.size||0)-(b.size||0);
+                sort==='size' ? (a.size||0)-(b.size||0) :
+                (a.duration||0)-(b.duration||0);
       return order==='desc' ? -cmp : cmp;
     });
   }, [files, search, sort, order]);
 
   const tabInfo = TABS.find(t=>t.key===tab);
+  const hasDuration = tab === 'video' || tab === 'audio';
 
-  function handleFileClick(file) {
-    // Audio plays in-app, everything else gets viewer sheet
-    if (file.type === 'audio') {
-      actions.play(file, source);
-    } else {
-      setViewerFile(file);
-    }
-  }
-
-  // Image tap plays in-app viewer
-  function handleImageClick(file) {
-    actions.play(file, source);
+  function handleFile(file) {
+    if (file.type === 'audio') { actions.play(file, source); return; }
+    if (file.type === 'image') { actions.play(file, source); return; }
+    setViewerFile(file);
   }
 
   return (
@@ -185,9 +299,9 @@ export default function ChannelPage({ channel, source, onBack }) {
       <div style={{ background:'#f2f2f7', padding:'52px 16px 0', flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'14px' }}>
           <button onClick={onBack}
-            style={{ width:'36px', height:'36px', borderRadius:'10px', background:'white',
-                     border:'none', cursor:'pointer', display:'flex', alignItems:'center',
-                     justifyContent:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.1)', flexShrink:0 }}>
+            style={{ width:'36px', height:'36px', borderRadius:'10px', background:'white', border:'none',
+                     cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+                     boxShadow:'0 1px 3px rgba(0,0,0,0.1)', flexShrink:0 }}>
             <ArrowLeft size={18} color="#3478f6" />
           </button>
           <h2 style={{ fontWeight:'700', fontSize:'18px', color:'#1c1c1e', margin:0,
@@ -195,28 +309,24 @@ export default function ChannelPage({ channel, source, onBack }) {
             {channel.name||channel.title}
           </h2>
         </div>
-
         {/* Search */}
         <div style={{ position:'relative', marginBottom:'12px' }}>
-          <Search size={14} style={{ position:'absolute', left:'12px', top:'50%',
-                                      transform:'translateY(-50%)', color:'#8e8e93' }} />
+          <Search size={14} style={{ position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', color:'#8e8e93' }} />
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search files..."
             style={{ width:'100%', background:'white', border:'none', borderRadius:'12px',
                      padding:'10px 12px 10px 34px', fontSize:'14px', color:'#1c1c1e',
                      outline:'none', boxShadow:'0 1px 3px rgba(0,0,0,0.08)' }} />
         </div>
-
         {/* Tabs */}
         <div style={{ display:'flex', gap:'8px', overflowX:'auto', paddingBottom:'12px', scrollbarWidth:'none' }}>
           {TABS.map(t => {
-            const Icon = t.icon;
-            const active = tab===t.key;
+            const Icon = t.icon; const active = tab===t.key;
             return (
               <button key={t.key} onClick={()=>setTab(t.key)}
                 style={{ display:'flex', alignItems:'center', gap:'5px', padding:'7px 14px',
                          borderRadius:'20px', border:'none', cursor:'pointer', flexShrink:0,
-                         background: active ? t.color : 'white',
-                         color: active ? 'white' : '#8e8e93', fontWeight:'600', fontSize:'13px',
+                         background: active ? t.color : 'white', color: active ? 'white' : '#8e8e93',
+                         fontWeight:'600', fontSize:'13px',
                          boxShadow: active ? 'none' : '0 1px 3px rgba(0,0,0,0.08)' }}>
                 <Icon size={13} />{t.label}
               </button>
@@ -228,21 +338,31 @@ export default function ChannelPage({ channel, source, onBack }) {
       {/* Content */}
       <div style={{ flex:1, overflowY:'auto', padding:'0 16px 100px' }}>
         {loading ? (
-          <div style={{ display:'flex', justifyContent:'center', padding:'40px' }}>
-            <div style={{ width:'28px', height:'28px', border:'3px solid #e5e5ea',
-                          borderTopColor: tabInfo?.color||'#3478f6',
-                          borderRadius:'50%', animation:'spin 1s linear infinite' }} />
+          <div>
+            {/* Sort bar skeleton */}
+            <div style={{ height:'32px', background:'#e5e5ea', borderRadius:'8px', margin:'10px 0 6px', animation:'shimmer 1.5s infinite' }} />
+            {/* Card skeletons */}
+            <div style={{ display:'grid', gridTemplateColumns: tab==='image'?'1fr 1fr 1fr':'1fr 1fr', gap:'12px' }}>
+              {[1,2,3,4,5,6].map(i => (
+                <div key={i} style={{ background:'white', borderRadius:'14px', overflow:'hidden', boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+                  <div style={{ aspectRatio: tab==='image'?'1':'16/9', background:'#e5e5ea', animation:'shimmer 1.5s infinite' }} />
+                  {tab!=='image' && <div style={{ padding:'10px' }}>
+                    <div style={{ height:'12px', background:'#e5e5ea', borderRadius:'4px', marginBottom:'6px', animation:'shimmer 1.5s infinite' }} />
+                    <div style={{ height:'10px', background:'#e5e5ea', borderRadius:'4px', width:'60%', animation:'shimmer 1.5s infinite' }} />
+                  </div>}
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <>
             {/* Sort bar */}
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-                          padding:'10px 0 6px' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0 6px' }}>
               <span style={{ fontSize:'13px', fontWeight:'600', color:'#8e8e93' }}>
-                {sorted.length} {tabInfo?.label||tab}
+                {sorted.length} {tabInfo?.label}
               </span>
               <div style={{ display:'flex', gap:'5px' }}>
-                {[{k:'date',l:'Date'},{k:'name',l:'Name'},{k:'size',l:'Size'}].map(s => (
+                {[{k:'date',l:'Date'},{k:'name',l:'Name'},{k:'size',l:'Size'}, ...(hasDuration?[{k:'duration',l:'Duration'}]:[])].map(s => (
                   <button key={s.k}
                     onClick={()=>{ if(sort===s.k) setOrder(o=>o==='asc'?'desc':'asc'); else{setSort(s.k);setOrder('desc');} }}
                     style={{ padding:'4px 10px', borderRadius:'10px', border:'none', cursor:'pointer',
@@ -258,93 +378,35 @@ export default function ChannelPage({ channel, source, onBack }) {
 
             {sorted.length === 0 ? (
               <div style={{ textAlign:'center', padding:'40px 20px' }}>
-                <p style={{ color:'#8e8e93', fontSize:'15px', fontWeight:'500' }}>
-                  No {(tabInfo?.label||tab).toLowerCase()} found
-                </p>
+                <p style={{ color:'#8e8e93', fontSize:'15px', fontWeight:'500' }}>No {tabInfo?.label?.toLowerCase()} found</p>
               </div>
             ) : tab === 'video' ? (
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
-                {sorted.map(f => (
-                  <div key={f.id} onClick={()=>handleFileClick(f)}
-                    style={{ background:'white', borderRadius:'14px', overflow:'hidden',
-                             boxShadow:'0 1px 4px rgba(0,0,0,0.08)', cursor:'pointer' }}>
-                    <div style={{ aspectRatio:'16/9', background:'linear-gradient(135deg,#1c1c3a,#2c2c54)',
-                                   display:'flex', alignItems:'center', justifyContent:'center', position:'relative' }}>
-                      <div style={{ width:'40px', height:'40px', borderRadius:'50%',
-                               background:'rgba(255,255,255,0.18)', display:'flex',
-                               alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)' }}>
-                        <Play size={18} color="white" fill="white" />
-                      </div>
-                      {f.size > 0 && (
-                        <span style={{ position:'absolute', bottom:'6px', left:'6px',
-                                       background:'rgba(0,0,0,0.65)', color:'white', fontSize:'10px',
-                                       padding:'2px 6px', borderRadius:'6px', fontWeight:'600' }}>
-                          {fmtSize(f.size)}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ padding:'10px' }}>
-                      <p style={{ fontSize:'12px', fontWeight:'600', color:'#1c1c1e', margin:0,
-                                   overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2,
-                                   WebkitBoxOrient:'vertical', lineHeight:'1.4' }}>
-                        {f.name.replace(/\.[^.]+$/,'')}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                {sorted.map(f => <VideoCard key={f.id} file={f} source={source} onClick={()=>handleFile(f)} />)}
+              </div>
+            ) : tab === 'audio' ? (
+              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+                {sorted.map(f => <AudioCard key={f.id} file={f} source={source} onClick={()=>handleFile(f)} />)}
               </div>
             ) : tab === 'image' ? (
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
-                {sorted.map(f => (
-                  <div key={f.id} onClick={()=>handleImageClick(f)}
-                    style={{ aspectRatio:'1', borderRadius:'10px', overflow:'hidden',
-                             background:'#e5e5ea', cursor:'pointer' }}>
-                    <img src={api.streamUrl(source, f.channel_id, f.msg_id)} alt={f.name}
-                      style={{ width:'100%', height:'100%', objectFit:'cover' }}
-                      onError={e=>{ e.target.parentNode.style.background='#e5e5ea'; e.target.style.display='none'; }} />
-                  </div>
-                ))}
+                {sorted.map(f => <ImageCard key={f.id} file={f} source={source} onClick={()=>handleFile(f)} />)}
               </div>
             ) : (
               <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-                {sorted.map(f => {
-                  const t = TABS.find(t=>t.key===tab);
-                  const Icon = t?.icon||FileText;
-                  const color = t?.color||'#8e8e93';
-                  return (
-                    <button key={f.id} onClick={()=>handleFileClick(f)}
-                      style={{ display:'flex', alignItems:'center', gap:'12px', background:'white',
-                                borderRadius:'14px', padding:'12px 14px', border:'none', cursor:'pointer',
-                                boxShadow:'0 1px 3px rgba(0,0,0,0.08)', textAlign:'left', width:'100%' }}>
-                      <div style={{ width:'42px', height:'42px', borderRadius:'10px', flexShrink:0,
-                                    background:color+'18', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                        <Icon size={20} color={color} />
-                      </div>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <p style={{ fontSize:'14px', fontWeight:'600', color:'#1c1c1e', margin:0,
-                                     overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {f.name.replace(/\.[^.]+$/,'')}
-                        </p>
-                        <p style={{ fontSize:'12px', color:'#8e8e93', margin:'2px 0 0' }}>
-                          {fmtSize(f.size)}
-                        </p>
-                      </div>
-                      <ExternalLink size={14} color="#c7c7cc" />
-                    </button>
-                  );
-                })}
+                {sorted.map(f => <DocCard key={f.id} file={f} source={source} tab={tab} onClick={()=>handleFile(f)} />)}
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* Viewer sheet */}
-      {viewerFile && (
-        <ViewerSheet file={viewerFile} source={source} onClose={()=>setViewerFile(null)} />
-      )}
+      {viewerFile && <ViewerSheet file={viewerFile} source={source} onClose={()=>setViewerFile(null)} />}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+      `}</style>
     </div>
   );
 }
