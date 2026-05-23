@@ -105,55 +105,36 @@ async def refresh_discover():
                 ch_id = int(ch_id_str)
                 chat = await client.get_chat(ch_id)
                 files = []
-                # Paginate to get ALL messages (no limit per batch)
-                offset_id = 0
-                while True:
-                    batch = await client.get_chat_history(ch_id, limit=200, offset_id=offset_id)
-                    if not batch:
-                        break
-                    last_id = None
-                    for msg in batch:
-                        last_id = msg.id
-                        media = (getattr(msg, "document", None) or
-                                 getattr(msg, "video", None) or
-                                 getattr(msg, "audio", None))
-                        # Extract thumbnail message_id if available
-                        thumb_msg_id = None
-                        if msg.video and hasattr(msg.video, "thumbs") and msg.video.thumbs:
-                            thumb_msg_id = msg.id  # use same msg_id, backend streams thumb
-                        if not media:
-                            if msg.photo:
-                                files.append({
-                                    "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
-                                    "channel_id": ch_id, "name": f"photo_{msg.id}.jpg",
-                                    "type": "image", "mime": "image/jpeg", "size": 0,
-                                    "date": msg.date.timestamp() if msg.date else 0,
-                                    "caption": msg.caption or "",
-                                    "thumb_msg_id": msg.id,
-                                })
-                            continue
-                        mime  = getattr(media, "mime_type", "") or ""
-                        fname = getattr(media, "file_name", "") or f"file_{msg.id}"
-                        ftype = media_type(mime, fname)
-                        if ftype == "other": continue
-                        # Extract duration
-                        duration = getattr(media, "duration", None)
-                        # Extract thumbnail
-                        thumbs = getattr(media, "thumbs", None)
-                        has_thumb = bool(thumbs)
-                        files.append({
-                            "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
-                            "channel_id": ch_id, "name": fname,
-                            "type": ftype, "mime": mime,
-                            "size": getattr(media, "file_size", 0),
-                            "date": msg.date.timestamp() if msg.date else 0,
-                            "caption": msg.caption or "",
-                            "duration": duration,
-                            "has_thumb": has_thumb,
-                        })
-                    if not batch or len(batch) < 200:
-                        break
-                    offset_id = last_id
+                # Get ALL messages using async iteration (Pyrogram handles pagination internally)
+                async for msg in client.get_chat_history(ch_id):
+                    media = (getattr(msg, "document", None) or
+                             getattr(msg, "video", None) or
+                             getattr(msg, "audio", None))
+                    if not media:
+                        if msg.photo:
+                            files.append({
+                                "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
+                                "channel_id": ch_id, "name": f"photo_{msg.id}.jpg",
+                                "type": "image", "mime": "image/jpeg", "size": 0,
+                                "date": msg.date.timestamp() if msg.date else 0,
+                                "caption": msg.caption or "",
+                                "has_thumb": True,
+                            })
+                        continue
+                    mime  = getattr(media, "mime_type", "") or ""
+                    fname = getattr(media, "file_name", "") or f"file_{msg.id}"
+                    ftype = media_type(mime, fname)
+                    if ftype == "other": continue
+                    files.append({
+                        "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
+                        "channel_id": ch_id, "name": fname,
+                        "type": ftype, "mime": mime,
+                        "size": getattr(media, "file_size", 0),
+                        "date": msg.date.timestamp() if msg.date else 0,
+                        "caption": msg.caption or "",
+                        "duration": getattr(media, "duration", None),
+                        "has_thumb": bool(getattr(media, "thumbs", None)),
+                    })
                 discover_cache[ch_id_str] = {
                     "id": ch_id, "str_id": ch_id_str,
                     "name": getattr(chat, "title", None) or ch_id_str,
@@ -293,46 +274,32 @@ async def get_user_chats(client: Client = Depends(get_user_client)):
     return {"chats": chats}
 
 @app.get("/api/chats/{chat_id}/files")
-async def get_chat_files(chat_id: int, request: Request, type: str = None,
+async def get_chat_files(chat_id: int, type: str = None,
                          client: Client = Depends(get_user_client)):
     files = []
-    offset = 0
-    limit = int(request.query_params.get("limit", "2000"))
     try:
-        offset_id = 0
-        while True:
-            batch = await client.get_chat_history(chat_id, limit=200, offset_id=offset_id)
-            if not batch:
-                break
-            last_id = None
-            for msg in batch:
-                last_id = msg.id
-                media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
-                if not media:
-                    if msg.photo and (not type or type == "image"):
-                        files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
-                                      "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
-                                      "type": "image", "mime": "image/jpeg", "size": 0,
-                                      "date": msg.date.timestamp() if msg.date else 0,
-                                      "caption": msg.caption or "",
-                                      "has_thumb": True})
-                    continue
-                mime  = getattr(media,"mime_type","") or ""
-                fname = getattr(media,"file_name","") or f"file_{msg.id}"
-                ftype = media_type(mime, fname)
-                if ftype == "other" or (type and ftype != type): continue
-                duration = getattr(media,"duration",None)
-                thumbs = getattr(media,"thumbs",None)
-                files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
-                              "channel_id": chat_id, "name": fname, "type": ftype, "mime": mime,
-                              "size": getattr(media,"file_size",0),
-                              "date": msg.date.timestamp() if msg.date else 0,
-                              "caption": msg.caption or "",
-                              "duration": duration,
-                              "has_thumb": bool(thumbs)})
-            if not batch or len(batch) < 200:
-                break
-            offset_id = last_id
+        async for msg in client.get_chat_history(chat_id):
+            media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
+            if not media:
+                if msg.photo and (not type or type == "image"):
+                    files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+                                  "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
+                                  "type": "image", "mime": "image/jpeg", "size": 0,
+                                  "date": msg.date.timestamp() if msg.date else 0,
+                                  "caption": msg.caption or "",
+                                  "has_thumb": True})
+                continue
+            mime  = getattr(media,"mime_type","") or ""
+            fname = getattr(media,"file_name","") or f"file_{msg.id}"
+            ftype = media_type(mime, fname)
+            if ftype == "other" or (type and ftype != type): continue
+            files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+                          "channel_id": chat_id, "name": fname, "type": ftype, "mime": mime,
+                          "size": getattr(media,"file_size",0),
+                          "date": msg.date.timestamp() if msg.date else 0,
+                          "caption": msg.caption or "",
+                          "duration": getattr(media,"duration",None),
+                          "has_thumb": bool(getattr(media,"thumbs",None))})
     except Exception as e: raise HTTPException(500, str(e))
     return {"files": files}
 
@@ -419,7 +386,12 @@ async def get_chat_photo(source: str, chat_id: int,
         chat = await client.get_chat(chat_id)
         if not chat.photo:
             raise HTTPException(404, "No photo")
-        data = await client.download_media(chat.photo.small_file_id, in_memory=True)
+        # Pyrogram uses photo.small_file_id or photo.big_file_id
+        photo = chat.photo
+        file_id = getattr(photo, "small_file_id", None) or getattr(photo, "big_file_id", None)
+        if not file_id:
+            raise HTTPException(404, "No photo file_id")
+        data = await client.download_media(file_id, in_memory=True)
         if not data:
             raise HTTPException(404, "No photo data")
         return FastResp(content=bytes(data), media_type="image/jpeg",
