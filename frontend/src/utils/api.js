@@ -67,4 +67,12 @@ export const api = {
   // Stream URL builder - uses token in query param
   streamUrl: (source, chatId, msgId) =>
     `${BASE}/stream/${source}/${chatId}/${msgId}?token=${encodeURIComponent(token())}`,
+
+  // Thumbnail URL for video/audio
+  thumbUrl: (source, chatId, msgId) =>
+    `${BASE}/thumb/${source}/${chatId}/${msgId}?token=${encodeURIComponent(token())}`,
+
+  // Chat/channel profile photo
+  chatPhotoUrl: (source, chatId) =>
+    `${BASE}/chat-photo/${source}/${chatId}?token=${encodeURIComponent(token())}`,
 };
