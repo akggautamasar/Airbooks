@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import Response, StreamingResponse, HTMLResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt as pyjwt
@@ -17,7 +17,7 @@ from pyrogram.errors import (
     SessionPasswordNeeded, PasswordHashInvalid, FloodWait
 )
 
-# ─── Bot client (for Discover / admin channels) ──────────────────────────────
+# ─── Bot client ───────────────────────────────────────────────────────────────
 bot_client: Optional[Client] = None
 
 async def get_bot():
@@ -27,9 +27,7 @@ async def get_bot():
     raise HTTPException(status_code=503, detail="Bot not connected")
 
 # ─── User sessions ────────────────────────────────────────────────────────────
-# session_id → pyrogram Client
 user_sessions: Dict[str, Client] = {}
-
 security = HTTPBearer(auto_error=False)
 
 def create_jwt(data: dict, hours: int = 24 * 30) -> str:
@@ -74,37 +72,56 @@ IMAGE_EXTS  = {".jpg",".jpeg",".png",".gif",".webp",".bmp"}
 
 def media_type(mime: str, fname: str) -> str:
     m, f = (mime or "").lower(), (fname or "").lower()
-    ext = Path(f).suffix
-    if m == "application/pdf" or f.endswith(".pdf"): return "pdf"
+    ext = Path(f).suffix.lower()
+    if m == "application/pdf" or ext == ".pdf": return "pdf"
     if m in ("application/epub+zip","application/epub") or ext == ".epub": return "epub"
     if m in VIDEO_MIMES or ext in VIDEO_EXTS: return "video"
     if m in AUDIO_MIMES or ext in AUDIO_EXTS: return "audio"
     if m in IMAGE_MIMES or ext in IMAGE_EXTS: return "image"
     return "other"
 
-# ─── Discover cache (bot channels) ───────────────────────────────────────────
-discover_cache: Dict[str, dict] = {}   # channel_id_str → {info, files}
+# ─── Discover cache ────────────────────────────────────────────────────────────
+discover_cache: Dict[str, dict] = {}
 _discover_lock = asyncio.Lock()
+_discover_done = False
 
 async def refresh_discover():
-    global discover_cache
+    global discover_cache, _discover_done
     if not bot_client or not bot_client.is_connected:
         return
     async with _discover_lock:
         for ch_id_str in config.BOT_CHANNELS:
             try:
                 ch_id = int(ch_id_str)
-                chat = await bot_client.get_chat(ch_id)
+                # Force resolve peer by joining/getting chat info
+                try:
+                    chat = await bot_client.get_chat(ch_id)
+                except Exception:
+                    # Try to resolve via get_messages first
+                    try:
+                        await bot_client.get_messages(ch_id, 1)
+                        chat = await bot_client.get_chat(ch_id)
+                    except Exception as e:
+                        print(f"Cannot access channel {ch_id_str}: {e}")
+                        continue
+
                 files = []
-                async for msg in bot_client.get_chat_history(ch_id, limit=500):
-                    media = getattr(msg, "document", None) or getattr(msg, "video", None) or getattr(msg, "audio", None)
+                # Scan up to 5000 messages
+                async for msg in bot_client.get_chat_history(ch_id, limit=5000):
+                    media = (getattr(msg, "document", None) or
+                             getattr(msg, "video", None) or
+                             getattr(msg, "audio", None))
                     if not media:
                         if msg.photo:
                             files.append({
-                                "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
-                                "channel_id": ch_id, "name": f"photo_{msg.id}.jpg",
-                                "type": "image", "mime": "image/jpeg",
-                                "size": 0, "date": msg.date.timestamp() if msg.date else 0,
+                                "id": f"{ch_id}_{msg.id}",
+                                "msg_id": msg.id,
+                                "channel_id": ch_id,
+                                "name": f"photo_{msg.id}.jpg",
+                                "type": "image",
+                                "mime": "image/jpeg",
+                                "size": 0,
+                                "date": msg.date.timestamp() if msg.date else 0,
                                 "caption": msg.caption or "",
                             })
                         continue
@@ -114,23 +131,31 @@ async def refresh_discover():
                     if ftype == "other":
                         continue
                     files.append({
-                        "id": f"{ch_id}_{msg.id}", "msg_id": msg.id,
-                        "channel_id": ch_id, "name": fname,
-                        "type": ftype, "mime": mime,
+                        "id": f"{ch_id}_{msg.id}",
+                        "msg_id": msg.id,
+                        "channel_id": ch_id,
+                        "name": fname,
+                        "type": ftype,
+                        "mime": mime,
                         "size": getattr(media, "file_size", 0),
                         "date": msg.date.timestamp() if msg.date else 0,
                         "caption": msg.caption or "",
                     })
+
                 discover_cache[ch_id_str] = {
-                    "id": ch_id, "str_id": ch_id_str,
-                    "name": chat.title or chat.username or ch_id_str,
-                    "username": chat.username or "",
-                    "description": chat.description or "",
+                    "id": ch_id,
+                    "str_id": ch_id_str,
+                    "name": getattr(chat, "title", None) or getattr(chat, "username", None) or ch_id_str,
+                    "username": getattr(chat, "username", None) or "",
+                    "description": getattr(chat, "description", None) or "",
                     "members": getattr(chat, "members_count", 0),
+                    "file_count": len(files),
                     "files": files,
                 }
+                print(f"Discover: {ch_id_str} → {len(files)} files")
             except Exception as e:
                 print(f"Discover refresh failed for {ch_id_str}: {e}")
+        _discover_done = True
 
 # ─── App lifecycle ────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -138,11 +163,14 @@ async def lifespan(app: FastAPI):
     global bot_client
     if config.BOT_TOKEN and config.API_ID:
         bot_client = Client(
-            "airbooks_bot", api_id=config.API_ID, api_hash=config.API_HASH,
-            bot_token=config.BOT_TOKEN, in_memory=True,
+            "airbooks_bot",
+            api_id=config.API_ID,
+            api_hash=config.API_HASH,
+            bot_token=config.BOT_TOKEN,
+            in_memory=True,
         )
         await bot_client.start()
-        print("Bot client started")
+        print(f"Bot started. Channels to scan: {config.BOT_CHANNELS}")
         asyncio.create_task(refresh_discover())
     yield
     if bot_client and bot_client.is_connected:
@@ -156,13 +184,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AirBooks", lifespan=lifespan)
 
 _origins = ([o.strip() for o in config.FRONTEND_URL.split(",") if o.strip()]
-            if config.FRONTEND_URL != "*" else ["*"])
-app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"],
-                   expose_headers=["Content-Length","Content-Range","Accept-Ranges"])
+            if config.FRONTEND_URL and config.FRONTEND_URL != "*" else ["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Length", "Content-Range", "Accept-Ranges"],
+)
 
-# ─── Auth: phone/OTP flow ─────────────────────────────────────────────────────
-pending_auth: Dict[str, dict] = {}  # phone_hash → {client, phone}
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+pending_auth: Dict[str, dict] = {}
 
 @app.post("/api/auth/send-code")
 async def send_code(request: Request):
@@ -171,8 +204,7 @@ async def send_code(request: Request):
     if not phone:
         raise HTTPException(400, "Phone number required")
     session_name = f"user_{hashlib.md5(phone.encode()).hexdigest()[:8]}"
-    client = Client(session_name, api_id=config.API_ID, api_hash=config.API_HASH,
-                    in_memory=True)
+    client = Client(session_name, api_id=config.API_ID, api_hash=config.API_HASH, in_memory=True)
     await client.connect()
     try:
         sent = await client.send_code(phone)
@@ -192,16 +224,13 @@ async def verify_code(request: Request):
     phone_code_hash = body.get("phone_code_hash", "")
     code = body.get("code", "").strip()
     password = body.get("password", "")
-
     if phone_code_hash not in pending_auth:
         raise HTTPException(400, "Session expired — request a new code")
-
     entry = pending_auth[phone_code_hash]
     client: Client = entry["client"]
     phone: str = entry["phone"]
-
     try:
-        signed_in = await client.sign_in(phone, phone_code_hash, code)
+        await client.sign_in(phone, phone_code_hash, code)
     except PhoneCodeInvalid:
         raise HTTPException(400, "Invalid code")
     except PhoneCodeExpired:
@@ -211,24 +240,28 @@ async def verify_code(request: Request):
         if not password:
             return {"needs_2fa": True, "phone_code_hash": phone_code_hash}
         try:
-            signed_in = await client.check_password(password)
+            await client.check_password(password)
         except PasswordHashInvalid:
             raise HTTPException(400, "Wrong 2FA password")
     except Exception as e:
         raise HTTPException(500, str(e))
-
     del pending_auth[phone_code_hash]
     me = await client.get_me()
     session_id = hashlib.md5(f"{me.id}{datetime.utcnow().isoformat()}".encode()).hexdigest()
     user_sessions[session_id] = client
-
-    token = create_jwt({"session_id": session_id, "user_id": me.id,
-                        "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
-                        "username": me.username or ""})
+    token = create_jwt({
+        "session_id": session_id,
+        "user_id": me.id,
+        "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
+        "username": me.username or "",
+    })
     return {
         "token": token,
-        "user": {"id": me.id, "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
-                 "username": me.username or "", "photo": None}
+        "user": {
+            "id": me.id,
+            "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
+            "username": me.username or "",
+        }
     }
 
 @app.post("/api/auth/logout")
@@ -247,16 +280,22 @@ async def logout(user: dict = Depends(require_auth)):
 @app.get("/api/auth/me")
 async def get_me(client: Client = Depends(get_user_client)):
     me = await client.get_me()
-    return {"id": me.id, "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
-            "username": me.username or ""}
+    return {
+        "id": me.id,
+        "name": f"{me.first_name or ''} {me.last_name or ''}".strip(),
+        "username": me.username or "",
+    }
 
-# ─── Discover endpoints ────────────────────────────────────────────────────────
+# ─── Discover ─────────────────────────────────────────────────────────────────
 @app.get("/api/discover/channels")
 async def get_discover_channels():
-    return {"channels": [
-        {k: v for k, v in ch.items() if k != "files"}
-        for ch in discover_cache.values()
-    ]}
+    return {
+        "channels": [
+            {k: v for k, v in ch.items() if k != "files"}
+            for ch in discover_cache.values()
+        ],
+        "ready": _discover_done,
+    }
 
 @app.get("/api/discover/channels/{ch_id}/files")
 async def get_channel_files(ch_id: str, type: str = None):
@@ -265,7 +304,10 @@ async def get_channel_files(ch_id: str, type: str = None):
     files = discover_cache[ch_id]["files"]
     if type:
         files = [f for f in files if f["type"] == type]
-    return {"files": files, "channel": {k: v for k, v in discover_cache[ch_id].items() if k != "files"}}
+    return {
+        "files": files,
+        "channel": {k: v for k, v in discover_cache[ch_id].items() if k != "files"},
+    }
 
 @app.post("/api/discover/refresh")
 async def trigger_discover_refresh():
@@ -276,15 +318,14 @@ async def trigger_discover_refresh():
 @app.get("/api/chats")
 async def get_user_chats(client: Client = Depends(get_user_client)):
     chats = []
-    async for dialog in client.get_dialogs(limit=100):
+    async for dialog in client.get_dialogs(limit=200):
         chat = dialog.chat
         chats.append({
             "id": chat.id,
-            "name": chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip(),
-            "username": chat.username or "",
+            "name": getattr(chat, "title", None) or f"{getattr(chat,'first_name','') or ''} {getattr(chat,'last_name','') or ''}".strip() or str(chat.id),
+            "username": getattr(chat, "username", None) or "",
             "type": str(chat.type).split(".")[-1].lower(),
-            "unread": dialog.unread_messages_count,
-            "photo": None,
+            "unread": getattr(dialog, "unread_messages_count", 0),
         })
     return {"chats": chats}
 
@@ -292,79 +333,56 @@ async def get_user_chats(client: Client = Depends(get_user_client)):
 async def get_chat_files(chat_id: int, type: str = None,
                          client: Client = Depends(get_user_client)):
     files = []
-    async for msg in client.get_chat_history(chat_id, limit=200):
-        media = getattr(msg, "document", None) or getattr(msg, "video", None) or getattr(msg, "audio", None)
-        if not media:
-            if msg.photo and (not type or type == "image"):
-                files.append({
-                    "id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
-                    "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
-                    "type": "image", "mime": "image/jpeg", "size": 0,
-                    "date": msg.date.timestamp() if msg.date else 0,
-                    "caption": msg.caption or "",
-                })
-            continue
-        mime  = getattr(media, "mime_type", "") or ""
-        fname = getattr(media, "file_name", "") or f"file_{msg.id}"
-        ftype = media_type(mime, fname)
-        if ftype == "other" or (type and ftype != type):
-            continue
-        files.append({
-            "id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
-            "channel_id": chat_id, "name": fname,
-            "type": ftype, "mime": mime,
-            "size": getattr(media, "file_size", 0),
-            "date": msg.date.timestamp() if msg.date else 0,
-            "caption": msg.caption or "",
-        })
+    try:
+        async for msg in client.get_chat_history(chat_id, limit=1000):
+            media = (getattr(msg, "document", None) or
+                     getattr(msg, "video", None) or
+                     getattr(msg, "audio", None))
+            if not media:
+                if msg.photo:
+                    ftype = "image"
+                    if type and ftype != type:
+                        continue
+                    files.append({
+                        "id": f"{chat_id}_{msg.id}",
+                        "msg_id": msg.id,
+                        "channel_id": chat_id,
+                        "name": f"photo_{msg.id}.jpg",
+                        "type": "image",
+                        "mime": "image/jpeg",
+                        "size": 0,
+                        "date": msg.date.timestamp() if msg.date else 0,
+                        "caption": msg.caption or "",
+                    })
+                continue
+            mime  = getattr(media, "mime_type", "") or ""
+            fname = getattr(media, "file_name", "") or f"file_{msg.id}"
+            ftype = media_type(mime, fname)
+            if ftype == "other":
+                continue
+            if type and ftype != type:
+                continue
+            files.append({
+                "id": f"{chat_id}_{msg.id}",
+                "msg_id": msg.id,
+                "channel_id": chat_id,
+                "name": fname,
+                "type": ftype,
+                "mime": mime,
+                "size": getattr(media, "file_size", 0),
+                "date": msg.date.timestamp() if msg.date else 0,
+                "caption": msg.caption or "",
+            })
+    except Exception as e:
+        raise HTTPException(500, str(e))
     return {"files": files}
 
 # ─── Streaming ────────────────────────────────────────────────────────────────
-async def _stream(client: Client, chat_id: int, msg_id: int,
-                  request: Request, file_size: int = 0, mime: str = "application/octet-stream"):
-    msg = await client.get_messages(chat_id, msg_id)
-    if not msg:
-        raise HTTPException(404, "Message not found")
-
-    range_header = request.headers.get("range")
-    offset = 0
-    end = file_size - 1 if file_size else None
-
-    if range_header and file_size:
-        parts = range_header.replace("bytes=", "").split("-")
-        offset = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if parts[1] else file_size - 1
-        chunk_size = end - offset + 1
-        status = 206
-        headers = {
-            "Content-Range": f"bytes {offset}-{end}/{file_size}",
-            "Content-Length": str(chunk_size),
-            "Accept-Ranges": "bytes",
-            "Content-Type": mime,
-        }
-    else:
-        status = 200
-        headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Type": mime,
-            "Cache-Control": "no-cache",
-        }
-        if file_size:
-            headers["Content-Length"] = str(file_size)
-
-    async def generator():
-        async for chunk in client.stream_media(msg, offset=offset, limit=1024*1024):
-            if await request.is_disconnected():
-                break
-            yield chunk
-
-    return StreamingResponse(generator(), status_code=status, headers=headers, media_type=mime)
-
 @app.get("/api/stream/{source}/{chat_id}/{msg_id}")
 async def stream_file(source: str, chat_id: int, msg_id: int,
                       request: Request,
-                      token: str = None,
                       user: dict = Depends(require_auth)):
+    # Pick client
     if source == "discover":
         client = await get_bot()
     else:
@@ -373,18 +391,71 @@ async def stream_file(source: str, chat_id: int, msg_id: int,
             raise HTTPException(401, "Not authenticated")
         client = user_sessions[sid]
 
-    # Get file info for size/mime
     try:
         msg = await client.get_messages(chat_id, msg_id)
-        media = getattr(msg, "document", None) or getattr(msg, "video", None) or getattr(msg, "audio", None)
-        file_size = getattr(media, "file_size", 0) if media else 0
-        mime = getattr(media, "mime_type", "application/octet-stream") if media else "application/octet-stream"
-    except Exception:
-        file_size, mime = 0, "application/octet-stream"
+    except Exception as e:
+        raise HTTPException(500, f"Could not fetch message: {e}")
 
-    return await _stream(client, chat_id, msg_id, request, file_size, mime)
+    if not msg:
+        raise HTTPException(404, "Message not found")
+
+    # Get media info
+    media = (getattr(msg, "document", None) or
+             getattr(msg, "video", None) or
+             getattr(msg, "audio", None))
+
+    if media:
+        file_size = getattr(media, "file_size", 0) or 0
+        mime = getattr(media, "mime_type", None) or "application/octet-stream"
+    elif msg.photo:
+        file_size = 0
+        mime = "image/jpeg"
+    else:
+        raise HTTPException(404, "No media in message")
+
+    # Handle range requests
+    range_header = request.headers.get("range", "")
+    if range_header and file_size:
+        parts = range_header.replace("bytes=", "").split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+        end = min(end, file_size - 1)
+        chunk = end - start + 1
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(chunk),
+            "Accept-Ranges": "bytes",
+            "Content-Type": mime,
+            "Cache-Control": "no-cache",
+        }
+        status = 206
+    else:
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Type": mime,
+            "Cache-Control": "no-cache",
+        }
+        if file_size:
+            headers["Content-Length"] = str(file_size)
+        status = 200
+
+    async def generator():
+        try:
+            async for chunk in client.stream_media(msg):
+                if await request.is_disconnected():
+                    break
+                yield chunk
+        except Exception as e:
+            print(f"Stream error: {e}")
+
+    return StreamingResponse(generator(), status_code=status, headers=headers, media_type=mime)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "discover_channels": len(discover_cache),
-            "active_sessions": len(user_sessions)}
+    return {
+        "status": "ok",
+        "discover_channels": len(discover_cache),
+        "discover_ready": _discover_done,
+        "bot_channels_config": config.BOT_CHANNELS,
+        "active_sessions": len(user_sessions),
+    }
