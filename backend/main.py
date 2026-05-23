@@ -11,6 +11,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt as pyjwt
 
 import config
+from streamer import stream_media_file
 from pyrogram import Client
 from pyrogram.errors import (
     PhoneNumberInvalid, PhoneCodeInvalid, PhoneCodeExpired,
@@ -301,10 +302,10 @@ async def get_chat_files(chat_id: int, request: Request, type: str = None,
 @app.get("/api/stream/{source}/{chat_id}/{msg_id}")
 async def stream_file(source: str, chat_id: int, msg_id: int,
                       request: Request, user: dict = Depends(require_auth)):
-    # Always use the requesting user's own session for streaming
-    # This ensures peer is always resolved since user scanned it themselves
+    # Pick client: prefer user's own session (peer already resolved),
+    # fall back to discover session
     sid = user.get("session_id")
-    if sid and sid in user_sessions:
+    if sid and sid in user_sessions and user_sessions[sid].is_connected:
         client = user_sessions[sid]
     elif source == "discover":
         client = get_discover_client()
@@ -313,47 +314,43 @@ async def stream_file(source: str, chat_id: int, msg_id: int,
     else:
         raise HTTPException(401, "Not authenticated")
 
-    try:
-        msg = await client.get_messages(chat_id, msg_id)
-    except Exception as e:
-        raise HTTPException(500, f"Could not fetch message: {e}")
-    if not msg: raise HTTPException(404, "Message not found")
-
-    media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
-    if media:
-        file_size = getattr(media,"file_size",0) or 0
-        mime = getattr(media,"mime_type",None) or "application/octet-stream"
-    elif msg.photo:
-        file_size = 0; mime = "image/jpeg"
-    else:
-        raise HTTPException(404, "No media in message")
-
-    range_header = request.headers.get("range","")
-    if range_header and file_size:
-        parts = range_header.replace("bytes=","").split("-")
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
-        end = min(end, file_size - 1)
-        # Don't set Content-Length for streaming - Telegram file sizes can be inaccurate
-        headers = {"Content-Range": f"bytes {start}-{end}/{file_size}",
-                   "Accept-Ranges": "bytes", "Content-Type": mime}
-        status = 206
-    else:
-        headers = {"Accept-Ranges": "bytes", "Content-Type": mime}
-        # Omit Content-Length to allow chunked transfer (avoids length mismatch errors)
-        status = 200
-
-    async def generator():
-        try:
-            async for chunk in client.stream_media(msg):
-                if await request.is_disconnected(): break
-                yield chunk
-        except Exception as e: print(f"Stream error: {e}")
-
-    return StreamingResponse(generator(), status_code=status, headers=headers, media_type=mime)
+    range_header = request.headers.get("range", "")
+    return await stream_media_file(client, chat_id, msg_id, range_header, request)
 
 # ─── Fast Player ──────────────────────────────────────────────────────────────
 FAST_PLAYER_HTML = open(Path(__file__).parent / "fast_player.html").read() if (Path(__file__).parent / "fast_player.html").exists() else "<h1>Player not found</h1>"
+
+@app.head("/api/stream/{source}/{chat_id}/{msg_id}")
+async def stream_file_head(source: str, chat_id: int, msg_id: int,
+                            request: Request, user: dict = Depends(require_auth)):
+    """HEAD request — returns file metadata without body (needed by video players for seeking)"""
+    from fastapi.responses import Response as FastResponse
+    sid = user.get("session_id")
+    if sid and sid in user_sessions and user_sessions[sid].is_connected:
+        client = user_sessions[sid]
+    elif source == "discover":
+        client = get_discover_client()
+        if not client:
+            raise HTTPException(503, "No session")
+    else:
+        raise HTTPException(401, "Not authenticated")
+
+    from streamer import get_streamer
+    streamer = get_streamer(client)
+    try:
+        file_id = await streamer.get_file_properties(chat_id, msg_id)
+        file_size = file_id.file_size or 0
+        mime = file_id.mime_type or "application/octet-stream"
+        headers = {
+            "Content-Type": mime,
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+        }
+        if file_size:
+            headers["Content-Length"] = str(file_size)
+        return FastResponse(status_code=200, headers=headers)
+    except Exception as e:
+        raise HTTPException(404, str(e))
 
 @app.get("/player", response_class=HTMLResponse)
 async def fast_player():

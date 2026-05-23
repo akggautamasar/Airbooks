@@ -132,7 +132,7 @@ function togglePlay(){V.paused?V.play().catch(()=>{}):V.pause()}
 function setSpd(s){speed=s;V.playbackRate=s;speedBtn.textContent=s+'x';speedMenu.style.display='none';speedMenu.querySelectorAll('.speed-item').forEach(el=>el.classList.toggle('active',parseFloat(el.textContent)===s));localStorage.setItem('ab_speed',s)}
 function seek(s){V.currentTime=Math.max(0,Math.min(V.duration||0,V.currentTime+s));showFb((s>0?'+':'')+s+'s')}
 function showFb(t){tapFb.textContent=t;tapFb.classList.add('show');clearTimeout(tapFb._t);tapFb._t=setTimeout(()=>tapFb.classList.remove('show'),900)}
-function retryLoad(){errOverlay.classList.remove('show');V.load()}
+function retryLoad(){errOverlay.classList.remove('show');retryCount=0;V.load();V.play().catch(()=>{})}
 function updatePlay(){const ico=playing?'⏸':'▶';playBtn.textContent=ico;centerPlay.style.opacity=playing?'0':'1';centerPlay.style.pointerEvents=playing?'none':'auto'}
 function updateMute(){muteBtn.textContent=V.muted||V.volume===0?'🔇':'🔊';volFill.style.width=(V.muted?0:V.volume)*100+'%'}
 function updateFs(){fsBtn.textContent=fs?'⊠':'⛶'}
@@ -149,7 +149,24 @@ else{
   V.addEventListener('timeupdate',()=>{if(V.duration){progFill.style.width=(V.currentTime/V.duration)*100+'%';timeEl.textContent=fmt(V.currentTime)+' / '+fmt(V.duration)}});
   V.addEventListener('progress',()=>{if(V.buffered.length>0&&V.duration)progBuf.style.width=(V.buffered.end(V.buffered.length-1)/V.duration)*100+'%'});
   V.addEventListener('ended',()=>{playing=false;updatePlay();showCtrl()});
-  V.addEventListener('error',()=>{spinner.classList.remove('show');errOverlay.classList.add('show');document.getElementById('errMsg').textContent='Could not play this video'});
+  let retryCount=0;
+  V.addEventListener('error',()=>{
+    spinner.classList.remove('show');
+    const resumeAt=V.currentTime;
+    if(retryCount<3){
+      retryCount++;
+      setTimeout(()=>{
+        // Reload video preserving position
+        V.load();
+        V.addEventListener('loadedmetadata',()=>{ if(resumeAt>1)V.currentTime=resumeAt; },{once:true});
+        V.play().catch(()=>{});
+      },1000*retryCount);
+    } else {
+      errOverlay.classList.add('show');
+      document.getElementById('errMsg').textContent='Could not play this video';
+    }
+  });
+  V.addEventListener('play',()=>{retryCount=0;});
   V.addEventListener('volumechange',updateMute);
   playBtn.addEventListener('click',togglePlay);
   centerPlay.addEventListener('click',togglePlay);
