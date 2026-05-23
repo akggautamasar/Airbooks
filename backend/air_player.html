@@ -253,14 +253,14 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Sy
 // ── URL params ────────────────────────────────────────────────────────────────
 const params   = new URLSearchParams(location.search);
 const fileUrl  = params.get('url') || '';
-// path param should be the drive path like /T8RN0O/R2ZU09
-// Extract it properly from either 'path' param or from the url param
 let filePath = params.get('path') || '';
-// If filePath still looks like /file?path=..., extract the real path
 if (filePath.startsWith('/file?path=')) {
   filePath = filePath.replace('/file?path=', '');
 }
-const fileName = decodeURIComponent((fileUrl || filePath).split('/').pop()?.split('?')[0] || 'video');
+// Use 'name' param if provided (AirBooks passes the real filename)
+// Fall back to extracting from URL (which may give wrong name like "1710")
+const paramName = params.get('name') || params.get('title') || '';
+const fileName = paramName || decodeURIComponent((fileUrl || filePath).split('/').pop()?.split('?')[0] || 'video');
 
 // Detect if browser can play this format natively
 const ext = fileName.split('.').pop()?.toLowerCase() || '';

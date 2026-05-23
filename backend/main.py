@@ -334,13 +334,13 @@ async def stream_file(source: str, chat_id: int, msg_id: int,
         start = int(parts[0]) if parts[0] else 0
         end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
         end = min(end, file_size - 1)
+        # Don't set Content-Length for streaming - Telegram file sizes can be inaccurate
         headers = {"Content-Range": f"bytes {start}-{end}/{file_size}",
-                   "Content-Length": str(end - start + 1),
                    "Accept-Ranges": "bytes", "Content-Type": mime}
         status = 206
     else:
         headers = {"Accept-Ranges": "bytes", "Content-Type": mime}
-        if file_size: headers["Content-Length"] = str(file_size)
+        # Omit Content-Length to allow chunked transfer (avoids length mismatch errors)
         status = 200
 
     async def generator():

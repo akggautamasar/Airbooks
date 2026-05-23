@@ -404,13 +404,17 @@ async function fetchWithRetry(url, onProgress, maxTries=3){
   throw last;
 }
 
-// ── URL PARAM AUTO-LOAD
+// ── URL PARAM AUTO-LOAD (supports ?url= direct or ?path= for drive)
 (async function(){
   const p=new URLSearchParams(location.search);
+  const directUrl=p.get('url');
   const path=p.get('path');
-  if(!path)return;
-  const fileUrl='/file?path='+encodeURIComponent(path);
-  const pathName=path.split('/').pop()||'document';
+  const titleParam=p.get('title')||p.get('name')||'';
+  const modeParam=p.get('mode')||'';
+  if(!directUrl&&!path)return;
+  // Use direct URL if provided (AirBooks streaming)
+  const fileUrl=directUrl||('/file?path='+encodeURIComponent(path));
+  const pathName=titleParam||(path||directUrl||'document').split('/').pop().split('?')[0]||'document';
   S.fileUrl=fileUrl;drop.classList.add('gone');spin.classList.add('on');
   // Show progress in toast
   let lastPct=-1;
@@ -423,8 +427,11 @@ async function fetchWithRetry(url, onProgress, maxTries=3){
     S.fileData=ab;
     const realName=getFilenameFromHeaders(headers)||pathName;
     S.fileName=realName;$('fname').textContent=realName;
+    // Detect mode from ?mode= param or filename extension
+    const detectedMode = modeParam || realName.split('.').pop().toLowerCase();
     const contentType=headers.get('Content-Type')||'';
-    const fileType=detectType(realName,contentType);
+    // Use modeParam from URL (?mode=pdf or ?mode=epub) as highest priority
+    const fileType = (modeParam==='epub'||modeParam==='pdf') ? modeParam : detectType(realName,contentType);
     if(fileType==='pdf')await loadPDF(ab);
     else if(fileType==='epub')await loadEPUB(ab);
     else{
