@@ -1,6 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { User, LogOut, Settings, ChevronRight, Shield, Info } from 'lucide-react';
+import { User, LogOut, Shield, Info, ChevronRight } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import { api } from '../../utils/api';
 
@@ -13,62 +12,77 @@ export default function SettingsScreen() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto pb-24">
-      <div className="px-5 pt-14 pb-6">
-        <h1 className="text-2xl font-bold text-white tracking-tight">Settings</h1>
+    <div style={{ flex: 1, overflowY: 'auto', background: '#f2f2f7' }}>
+      <div style={{ padding: '52px 16px 16px' }}>
+        <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#1c1c1e', margin: '0 0 20px' }}>Settings</h1>
       </div>
 
-      {/* Profile */}
+      {/* Profile card */}
       {state.isLoggedIn && state.user ? (
-        <div className="mx-5 mb-5 bg-white/[0.05] border border-white/[0.08] rounded-2xl p-4 flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-white font-bold text-xl">
-            {(state.user.name || '?')[0].toUpperCase()}
+        <div style={{ margin: '0 16px 20px', background: 'white', borderRadius: '16px',
+                      padding: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ width: '56px', height: '56px', borderRadius: '14px',
+                        background: 'linear-gradient(135deg,#3478f6,#5856d6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: 'white', fontWeight: '700', fontSize: '20px' }}>
+            {(state.user.name||'?')[0].toUpperCase()}
           </div>
           <div>
-            <p className="font-semibold text-white">{state.user.name}</p>
-            {state.user.username && <p className="text-sm text-white/40">@{state.user.username}</p>}
-            <span className="text-[10px] bg-blue-600/20 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full mt-1 inline-block">
-              Telegram Connected
+            <p style={{ fontWeight: '700', fontSize: '16px', color: '#1c1c1e', margin: 0 }}>{state.user.name}</p>
+            {state.user.username && <p style={{ fontSize: '13px', color: '#8e8e93', margin: '3px 0 0' }}>@{state.user.username}</p>}
+            <span style={{ fontSize: '11px', fontWeight: '600', color: '#3478f6',
+                           background: '#e8f0ff', borderRadius: '6px', padding: '2px 8px', display: 'inline-block', marginTop: '5px' }}>
+              Connected
             </span>
           </div>
         </div>
       ) : (
-        <div className="mx-5 mb-5 bg-white/[0.04] border border-white/[0.07] rounded-2xl p-5 text-center">
-          <User size={28} className="text-white/20 mx-auto mb-2" />
-          <p className="text-sm text-white/50 mb-1">Not signed in</p>
-          <p className="text-xs text-white/30">Go to Chats tab to login with Telegram</p>
+        <div style={{ margin: '0 16px 20px', background: 'white', borderRadius: '16px',
+                      padding: '20px', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+          <User size={32} color="#c7c7cc" style={{ margin: '0 auto 8px', display: 'block' }} />
+          <p style={{ color: '#8e8e93', fontSize: '14px', margin: 0 }}>Not signed in</p>
         </div>
       )}
 
-      {/* Menu items */}
-      <div className="px-5 space-y-2">
+      {/* Menu */}
+      <div style={{ margin: '0 16px', background: 'white', borderRadius: '16px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
         {[
-          { icon: Shield, label: 'Privacy & Security', sub: 'Manage your data' },
-          { icon: Info, label: 'About AirBooks', sub: 'Version 1.0' },
-        ].map((item) => (
-          <button key={item.label}
-            className="w-full flex items-center gap-3 bg-white/[0.04] border border-white/[0.07] rounded-xl px-4 py-3">
-            <div className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center">
-              <item.icon size={16} className="text-white/60" />
-            </div>
-            <div className="flex-1 text-left">
-              <p className="text-sm font-medium text-white">{item.label}</p>
-              <p className="text-xs text-white/35">{item.sub}</p>
-            </div>
-            <ChevronRight size={15} className="text-white/25" />
-          </button>
+          { icon: Shield, label: 'Privacy & Security', sub: 'Manage your data', color: '#3478f6' },
+          { icon: Info,   label: 'About AirBooks',     sub: 'Version 1.0',      color: '#8e8e93' },
+        ].map((item, i, arr) => (
+          <div key={item.label}>
+            <button style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%',
+                             padding: '14px 16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px',
+                            background: item.color+'20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <item.icon size={16} color={item.color} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: '500', fontSize: '15px', color: '#1c1c1e', margin: 0 }}>{item.label}</p>
+                <p style={{ fontSize: '12px', color: '#8e8e93', margin: '2px 0 0' }}>{item.sub}</p>
+              </div>
+              <ChevronRight size={15} color="#c7c7cc" />
+            </button>
+            {i < arr.length - 1 && <div style={{ height: '1px', background: '#f2f2f7', marginLeft: '60px' }} />}
+          </div>
         ))}
-
-        {state.isLoggedIn && (
-          <button onClick={handleLogout}
-            className="w-full flex items-center gap-3 bg-red-500/[0.08] border border-red-500/20 rounded-xl px-4 py-3 mt-4">
-            <div className="w-9 h-9 rounded-xl bg-red-500/10 flex items-center justify-center">
-              <LogOut size={16} className="text-red-400" />
-            </div>
-            <p className="text-sm font-medium text-red-400">Sign Out</p>
-          </button>
-        )}
       </div>
+
+      {state.isLoggedIn && (
+        <div style={{ margin: '16px 16px 100px' }}>
+          <button onClick={handleLogout}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px',
+                     background: 'white', borderRadius: '16px', padding: '14px 16px',
+                     border: 'none', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#ff3b3015',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LogOut size={16} color="#ff3b30" />
+            </div>
+            <span style={{ fontWeight: '500', fontSize: '15px', color: '#ff3b30' }}>Sign Out</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
