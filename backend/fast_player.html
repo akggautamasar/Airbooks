@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AirBooks Fast Player</title>
+<style>
+:root{--primary:#0ea5e9;--bg:#000;--ctrl-bg:rgba(255,255,255,0.12);--ctrl-border:rgba(255,255,255,0.2)}
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;-webkit-tap-highlight-color:transparent}
+body{background:#000;color:#fff;overflow:hidden;height:100vh}
+.container{width:100vw;height:100vh;position:relative;display:flex;align-items:center;justify-content:center;background:#000}
+video{width:100%;height:100%;object-fit:contain;background:#000}
+.top-bar{position:absolute;top:0;inset-x:0;background:linear-gradient(rgba(0,0,0,0.85),transparent);padding:env(safe-area-inset-top,12px) 16px 32px;transform:translateY(-100%);transition:transform .3s;z-index:10}
+.top-bar.show{transform:translateY(0)}
+.top-row{display:flex;align-items:center;gap:12px}
+.back-btn{width:38px;height:38px;border-radius:12px;background:var(--ctrl-bg);border:1px solid var(--ctrl-border);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.title{flex:1;font-size:14px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.speed-btn{background:var(--ctrl-bg);border:1px solid var(--ctrl-border);color:#fff;padding:6px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700}
+.speed-menu{position:absolute;top:60px;right:16px;background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:14px;overflow:hidden;z-index:20}
+.speed-item{display:block;width:100%;padding:10px 20px;text-align:left;background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;font-size:13px}
+.speed-item:hover,.speed-item.active{background:rgba(14,165,233,0.15);color:#0ea5e9}
+.bottom-bar{position:absolute;bottom:0;inset-x:0;background:linear-gradient(transparent,rgba(0,0,0,0.9));padding:32px 16px calc(env(safe-area-inset-bottom,0px) + 12px);transform:translateY(100%);transition:transform .3s;z-index:10}
+.bottom-bar.show{transform:translateY(0)}
+.progress-wrap{margin-bottom:12px;padding:8px 0;cursor:pointer}
+.progress-track{height:4px;background:rgba(255,255,255,0.2);border-radius:2px;position:relative;transition:height .15s}
+.progress-wrap:hover .progress-track{height:6px}
+.progress-buf{position:absolute;inset-y:0;left:0;background:rgba(255,255,255,0.35);border-radius:2px}
+.progress-fill{position:absolute;inset-y:0;left:0;background:var(--primary);border-radius:2px;transition:width .1s}
+.controls{display:flex;align-items:center;gap:12px}
+.ctrl-btn{background:var(--ctrl-bg);border:1px solid var(--ctrl-border);color:#fff;width:40px;height:40px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.play-btn{width:48px;height:48px;border-radius:14px}
+.time{color:rgba(255,255,255,0.7);font-size:12px;font-family:monospace;flex:1}
+.vol-wrap{display:flex;align-items:center;gap:8px}
+.vol-track{width:72px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;cursor:pointer;position:relative}
+.vol-fill{height:100%;background:#fff;border-radius:2px}
+.center-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:72px;height:72px;background:rgba(0,0,0,0.7);border:2px solid rgba(255,255,255,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;backdrop-filter:blur(8px)}
+.center-play:hover{transform:translate(-50%,-50%) scale(1.1)}
+.center-play.hidden{opacity:0;pointer-events:none}
+.spinner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:48px;height:48px;border:3px solid rgba(255,255,255,0.2);border-top-color:var(--primary);border-radius:50%;animation:spin 1s linear infinite;display:none}
+.spinner.show{display:block}
+.tap-zone{position:absolute;top:0;bottom:0;width:30%;z-index:5;cursor:pointer}
+.tap-zone.left{left:0}.tap-zone.right{right:0}
+.tap-feedback{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;pointer-events:none;opacity:0;transition:opacity .2s;z-index:20;white-space:nowrap}
+.tap-feedback.show{opacity:1}
+.resume-banner{position:absolute;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(14,165,233,0.95);color:#fff;padding:10px 18px;border-radius:14px;font-size:13px;font-weight:600;display:flex;gap:10px;align-items:center;z-index:30;backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,0.4)}
+.resume-banner button{border:none;cursor:pointer;padding:4px 12px;border-radius:8px;font-weight:700;font-size:12px}
+.rb-yes{background:#fff;color:#0ea5e9}
+.rb-no{background:rgba(255,255,255,0.2);color:#fff}
+.error-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.8);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;display:none}
+.error-overlay.show{display:flex}
+.retry-btn{background:var(--primary);color:#fff;border:none;padding:10px 24px;border-radius:12px;cursor:pointer;font-size:14px;font-weight:600}
+.container.inactive{cursor:none}
+.container.inactive .top-bar,.container.inactive .bottom-bar{transform:translateY(-100%)}
+.container.inactive .bottom-bar{transform:translateY(100%)}
+@media(max-width:480px){.vol-wrap{display:none}}
+@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="container" id="C">
+  <video id="V" preload="auto" playsinline></video>
+  <div class="spinner" id="spinner"></div>
+  <div class="center-play" id="centerPlay"><svg width="28" height="28" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg></div>
+  <div class="tap-zone left" id="tapL"></div>
+  <div class="tap-zone right" id="tapR"></div>
+  <div class="tap-feedback" id="tapFb"></div>
+  <div class="error-overlay" id="errOverlay">
+    <p id="errMsg" style="color:rgba(255,255,255,0.6);font-size:14px"></p>
+    <button class="retry-btn" onclick="retryLoad()">↺ Retry</button>
+  </div>
+  <div class="top-bar" id="topBar">
+    <div class="top-row">
+      <button class="back-btn" onclick="history.back()">←</button>
+      <span class="title" id="titleEl"></span>
+      <button class="speed-btn" id="speedBtn"></button>
+      <div class="speed-menu" id="speedMenu" style="display:none">
+        <button class="speed-item" onclick="setSpd(0.25)">0.25x</button>
+        <button class="speed-item" onclick="setSpd(0.5)">0.5x</button>
+        <button class="speed-item" onclick="setSpd(0.75)">0.75x</button>
+        <button class="speed-item active" onclick="setSpd(1)">1x</button>
+        <button class="speed-item" onclick="setSpd(1.25)">1.25x</button>
+        <button class="speed-item" onclick="setSpd(1.5)">1.5x</button>
+        <button class="speed-item" onclick="setSpd(1.75)">1.75x</button>
+        <button class="speed-item" onclick="setSpd(2)">2x</button>
+        <button class="speed-item" onclick="setSpd(2.5)">2.5x</button>
+        <button class="speed-item" onclick="setSpd(3)">3x</button>
+      </div>
+    </div>
+  </div>
+  <div class="bottom-bar" id="botBar">
+    <div class="progress-wrap" id="progWrap">
+      <div class="progress-track">
+        <div class="progress-buf" id="progBuf"></div>
+        <div class="progress-fill" id="progFill"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="ctrl-btn play-btn" id="playBtn"></button>
+      <button class="ctrl-btn" onclick="seek(-10)" title="-10s">⏮</button>
+      <button class="ctrl-btn" onclick="seek(10)" title="+10s">⏭</button>
+      <span class="time" id="timeEl">0:00 / 0:00</span>
+      <div class="vol-wrap">
+        <button class="ctrl-btn" id="muteBtn"></button>
+        <div class="vol-track" id="volTrack"><div class="vol-fill" id="volFill"></div></div>
+      </div>
+      <button class="ctrl-btn" id="fsBtn" title="Fullscreen">⛶</button>
+    </div>
+  </div>
+</div>
+<script>
+const p = new URLSearchParams(location.search);
+const url = p.get('url'), name = p.get('name')||'Video', vid = p.get('id')||url;
+const V=document.getElementById('V'), C=document.getElementById('C');
+const topBar=document.getElementById('topBar'), botBar=document.getElementById('botBar');
+const centerPlay=document.getElementById('centerPlay'), spinner=document.getElementById('spinner');
+const playBtn=document.getElementById('playBtn'), muteBtn=document.getElementById('muteBtn');
+const progFill=document.getElementById('progFill'), progBuf=document.getElementById('progBuf');
+const timeEl=document.getElementById('timeEl'), speedBtn=document.getElementById('speedBtn');
+const speedMenu=document.getElementById('speedMenu'), tapFb=document.getElementById('tapFb');
+const fsBtn=document.getElementById('fsBtn'), volFill=document.getElementById('volFill');
+const titleEl=document.getElementById('titleEl'), errOverlay=document.getElementById('errOverlay');
+let playing=false, speed=1, hideT, lastTap=0, tapN=0, savedVol=1, fs=false;
+const HIST='ab_history';
+function fmt(s){if(!s||isNaN(s))return'0:00';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=Math.floor(s%60);return h>0?h+':'+(''+m).padStart(2,'0')+':'+(''+sc).padStart(2,'0'):m+':'+(''+sc).padStart(2,'0')}
+function getHist(){try{return JSON.parse(localStorage.getItem(HIST)||'[]')}catch{return[]}}
+function saveProgress(){if(!V.duration||V.duration<10)return;const pct=V.currentTime/V.duration;if(pct<0.02||pct>0.97)return;let h=getHist().filter(x=>x.id!==vid);h.unshift({id:vid,t:V.currentTime,dur:V.duration,name,ts:Date.now()});if(h.length>50)h.pop();localStorage.setItem(HIST,JSON.stringify(h))}
+function getResume(){const x=getHist().find(x=>x.id===vid);return x?x.t:null}
+function showResume(t){const b=document.createElement('div');b.className='resume-banner';const m=Math.floor(t/60),s=Math.floor(t%60);b.innerHTML=`<span>Resume from ${m}:${(''+s).padStart(2,'0')}?</span><button class="rb-yes" onclick="V.currentTime=${t};this.parentElement.remove()">Resume</button><button class="rb-no" onclick="this.parentElement.remove()">Start over</button>`;C.appendChild(b);setTimeout(()=>b.remove(),8000)}
+function showCtrl(){topBar.classList.add('show');botBar.classList.add('show');C.classList.remove('inactive');clearTimeout(hideT);if(playing)hideT=setTimeout(hideCtrl,3500)}
+function hideCtrl(){topBar.classList.remove('show');botBar.classList.remove('show');C.classList.add('inactive')}
+function togglePlay(){V.paused?V.play().catch(()=>{}):V.pause()}
+function setSpd(s){speed=s;V.playbackRate=s;speedBtn.textContent=s+'x';speedMenu.style.display='none';speedMenu.querySelectorAll('.speed-item').forEach(el=>el.classList.toggle('active',parseFloat(el.textContent)===s));localStorage.setItem('ab_speed',s)}
+function seek(s){V.currentTime=Math.max(0,Math.min(V.duration||0,V.currentTime+s));showFb((s>0?'+':'')+s+'s')}
+function showFb(t){tapFb.textContent=t;tapFb.classList.add('show');clearTimeout(tapFb._t);tapFb._t=setTimeout(()=>tapFb.classList.remove('show'),900)}
+function retryLoad(){errOverlay.classList.remove('show');V.load()}
+function updatePlay(){const ico=playing?'⏸':'▶';playBtn.textContent=ico;centerPlay.style.opacity=playing?'0':'1';centerPlay.style.pointerEvents=playing?'none':'auto'}
+function updateMute(){muteBtn.textContent=V.muted||V.volume===0?'🔇':'🔊';volFill.style.width=(V.muted?0:V.volume)*100+'%'}
+function updateFs(){fsBtn.textContent=fs?'⊠':'⛶'}
+if(!url){errOverlay.classList.add('show');document.getElementById('errMsg').textContent='No video URL provided';}
+else{
+  titleEl.textContent=name.replace(/\.[^.]+$/,'');
+  document.title=name+' — AirBooks';
+  V.src=url;
+  V.addEventListener('play',()=>{playing=true;updatePlay();spinner.classList.remove('show');showCtrl()});
+  V.addEventListener('pause',()=>{playing=false;updatePlay();showCtrl()});
+  V.addEventListener('waiting',()=>spinner.classList.add('show'));
+  V.addEventListener('canplay',()=>spinner.classList.remove('show'));
+  V.addEventListener('loadedmetadata',()=>{timeEl.textContent=fmt(0)+' / '+fmt(V.duration);const r=getResume();if(r&&r>5)showResume(r)});
+  V.addEventListener('timeupdate',()=>{if(V.duration){progFill.style.width=(V.currentTime/V.duration)*100+'%';timeEl.textContent=fmt(V.currentTime)+' / '+fmt(V.duration)}});
+  V.addEventListener('progress',()=>{if(V.buffered.length>0&&V.duration)progBuf.style.width=(V.buffered.end(V.buffered.length-1)/V.duration)*100+'%'});
+  V.addEventListener('ended',()=>{playing=false;updatePlay();showCtrl()});
+  V.addEventListener('error',()=>{spinner.classList.remove('show');errOverlay.classList.add('show');document.getElementById('errMsg').textContent='Could not play this video'});
+  V.addEventListener('volumechange',updateMute);
+  playBtn.addEventListener('click',togglePlay);
+  centerPlay.addEventListener('click',togglePlay);
+  muteBtn.addEventListener('click',()=>{V.muted=!V.muted;if(!V.muted&&V.volume===0)V.volume=savedVol;updateMute()});
+  document.getElementById('progWrap').addEventListener('click',e=>{const r=e.currentTarget.querySelector('.progress-track').getBoundingClientRect();if(V.duration)V.currentTime=((e.clientX-r.left)/r.width)*V.duration});
+  document.getElementById('volTrack').addEventListener('click',e=>{const r=e.currentTarget.getBoundingClientRect();V.volume=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));V.muted=false;savedVol=V.volume;updateMute()});
+  speedBtn.addEventListener('click',e=>{e.stopPropagation();speedMenu.style.display=speedMenu.style.display==='none'?'block':'none'});
+  document.addEventListener('click',()=>speedMenu.style.display='none');
+  speedMenu.addEventListener('click',e=>e.stopPropagation());
+  fsBtn.addEventListener('click',()=>{if(!fs)C.requestFullscreen?.();else document.exitFullscreen?.()});
+  document.addEventListener('fullscreenchange',()=>{fs=!!document.fullscreenElement;updateFs()});
+  document.getElementById('tapL').addEventListener('dblclick',()=>seek(-10));
+  document.getElementById('tapR').addEventListener('dblclick',()=>seek(10));
+  C.addEventListener('click',showCtrl);
+  C.addEventListener('mousemove',showCtrl);
+  C.addEventListener('touchstart',showCtrl,{passive:true});
+  document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA'].includes(e.target.tagName))return;if(e.code==='Space'){e.preventDefault();togglePlay()}else if(e.code==='ArrowLeft')seek(-10);else if(e.code==='ArrowRight')seek(10);else if(e.code==='ArrowUp'){V.volume=Math.min(1,V.volume+0.1);updateMute()}else if(e.code==='ArrowDown'){V.volume=Math.max(0,V.volume-0.1);updateMute()}else if(e.code==='KeyM'){V.muted=!V.muted;updateMute()}else if(e.code==='KeyF')fsBtn.click()});
+  const sv=parseFloat(localStorage.getItem('ab_speed')||'1');setSpd(sv);
+  updatePlay();updateMute();updateFs();showCtrl();
+  setInterval(saveProgress,5000);
+  window.addEventListener('beforeunload',saveProgress);
+}
+</script>
+</body>
+</html>
