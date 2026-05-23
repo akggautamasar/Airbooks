@@ -69,7 +69,7 @@ export default function AudioPlayer() {
           </button>
         </div>
 
-        <audio ref={audioRef} src={src} preload="auto"
+        <audio ref={audioRef} src={src} preload="auto" autoPlay
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onLoadedMetadata={e => setDuration(e.target.duration)}

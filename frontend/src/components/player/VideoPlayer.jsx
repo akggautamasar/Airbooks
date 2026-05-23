@@ -1,13 +1,14 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Play, Pause, Volume2, VolumeX, Maximize, Minimize, SkipBack, SkipForward, RotateCcw } from 'lucide-react';
+import { ChevronDown, Play, Pause, Volume2, VolumeX, Maximize, Minimize,
+         SkipBack, SkipForward, ExternalLink } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import { api } from '../../utils/api';
 
 function fmt(s) {
   if (!s || isNaN(s)) return '0:00';
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = Math.floor(s%60);
-  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}` : `${m}:${String(sec).padStart(2,'0')}`;
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sc = Math.floor(s%60);
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}` : `${m}:${String(sc).padStart(2,'0')}`;
 }
 
 export default function VideoPlayer() {
@@ -27,14 +28,18 @@ export default function VideoPlayer() {
   const [loading, setLoading] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
-  const [error, setError] = useState('');
+  const [canPlay, setCanPlay] = useState(false);
 
   const streamUrl = file ? api.streamUrl(source, file.channel_id, file.msg_id) : null;
+  const backendBase = (import.meta.env.VITE_API_URL || '').replace(/\/api$/, '');
+  const fastPlayerUrl = streamUrl
+    ? `${backendBase}/player?url=${encodeURIComponent(streamUrl)}&name=${encodeURIComponent(file?.name||'')}&id=${encodeURIComponent(file?.id||'')}`
+    : null;
 
   useEffect(() => {
     if (!file) return;
     setPlaying(false); setCurrentTime(0); setDuration(0);
-    setLoading(true); setError('');
+    setLoading(true); setCanPlay(false);
     videoRef.current?.load();
   }, [file?.id]);
 
@@ -103,35 +108,43 @@ export default function VideoPlayer() {
           ref={videoRef}
           src={streamUrl}
           className="max-w-full max-h-full"
-          playsInline preload="auto"
-          onPlay={() => { setPlaying(true); setLoading(false); }}
+          playsInline
+          preload="auto"
+          onPlay={() => { setPlaying(true); setLoading(false); setCanPlay(true); }}
           onPause={() => setPlaying(false)}
           onLoadedMetadata={e => { setDuration(e.target.duration); setLoading(false); }}
+          onCanPlay={() => { setLoading(false); setCanPlay(true); }}
           onTimeUpdate={e => {
             setCurrentTime(e.target.currentTime);
             if (e.target.buffered.length > 0)
               setBuffered(e.target.buffered.end(e.target.buffered.length - 1));
           }}
           onWaiting={() => setLoading(true)}
-          onCanPlay={() => setLoading(false)}
-          onError={() => { setError('Could not play this video'); setLoading(false); }}
+          onError={() => setLoading(false)}
         />
-        {loading && !error && (
+
+        {/* Loading */}
+        {loading && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-12 h-12 border-2 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-            <div className="text-center">
-              <p className="text-white/60 text-sm mb-3">{error}</p>
-              <button onClick={e => { e.stopPropagation(); setError(''); videoRef.current?.load(); }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm flex items-center gap-2 mx-auto">
-                <RotateCcw size={14} /> Retry
-              </button>
-            </div>
+
+        {/* Fast Player suggestion — always visible when paused */}
+        {!playing && !loading && fastPlayerUrl && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none">
+            <button className="pointer-events-auto w-16 h-16 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center"
+                    onClick={e => { e.stopPropagation(); togglePlay(); }}>
+              <Play size={28} className="text-white ml-1" />
+            </button>
+            <a href={fastPlayerUrl} target="_blank" rel="noreferrer"
+               onClick={e => e.stopPropagation()}
+               className="pointer-events-auto flex items-center gap-2 bg-yellow-400/90 text-black font-bold text-sm px-4 py-2 rounded-full backdrop-blur-sm">
+              <ExternalLink size={14} /> Open in Fast Player
+            </a>
           </div>
         )}
+
         {/* Double-tap zones */}
         <div className="absolute left-0 top-0 bottom-0 w-1/3 z-10"
              onDoubleClick={e => { e.stopPropagation(); seek(-10); }} />
@@ -143,20 +156,34 @@ export default function VideoPlayer() {
         {showControls && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute inset-0 pointer-events-none">
+
             {/* Top */}
             <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 to-transparent px-4 pt-12 pb-6 pointer-events-auto">
               <div className="flex items-center gap-3">
-                <button onClick={actions.stop} className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                <button onClick={actions.stop}
+                  className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
                   <ChevronDown size={20} className="text-white" />
                 </button>
-                <p className="flex-1 text-sm font-semibold text-white truncate">{file?.name?.replace(/\.[^.]+$/, '')}</p>
+                <p className="flex-1 text-sm font-semibold text-white truncate">
+                  {file?.name?.replace(/\.[^.]+$/, '')}
+                </p>
+                {fastPlayerUrl && (
+                  <a href={fastPlayerUrl} target="_blank" rel="noreferrer"
+                     onClick={e => e.stopPropagation()}
+                     className="flex items-center gap-1.5 bg-yellow-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full">
+                    ⚡ Fast Player
+                  </a>
+                )}
                 <div className="relative">
                   <button onClick={e => { e.stopPropagation(); setShowSpeedMenu(v => !v); }}
-                    className="px-3 py-1.5 rounded-lg bg-white/10 text-xs font-bold text-white">{speed}x</button>
+                    className="px-3 py-1.5 rounded-lg bg-white/10 text-xs font-bold text-white">
+                    {speed}x
+                  </button>
                   {showSpeedMenu && (
                     <div className="absolute top-10 right-0 bg-[#1a1a2e] border border-white/10 rounded-2xl overflow-hidden z-50 pointer-events-auto shadow-xl">
                       {SPEEDS.map(s => (
-                        <button key={s} onClick={e => { e.stopPropagation(); if(videoRef.current) videoRef.current.playbackRate=s; setSpeed(s); setShowSpeedMenu(false); }}
+                        <button key={s}
+                          onClick={e => { e.stopPropagation(); if(videoRef.current) videoRef.current.playbackRate=s; setSpeed(s); setShowSpeedMenu(false); }}
                           className={`block w-full px-5 py-2.5 text-sm text-left transition-colors ${speed===s?'text-blue-400 bg-blue-500/10':'text-white/70 hover:bg-white/5'}`}>
                           {s}x
                         </button>
@@ -166,25 +193,16 @@ export default function VideoPlayer() {
                 </div>
               </div>
             </div>
-            {/* Center play */}
-            {!playing && !loading && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
-                <button onClick={e => { e.stopPropagation(); togglePlay(); }}
-                  className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center">
-                  <Play size={28} className="text-white ml-1" />
-                </button>
-              </div>
-            )}
+
             {/* Bottom */}
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-8 pointer-events-auto">
-              <div className="mb-3 cursor-pointer" onClick={e => {
-                e.stopPropagation();
-                const r = e.currentTarget.getBoundingClientRect();
-                if(videoRef.current && duration) videoRef.current.currentTime = ((e.clientX-r.left)/r.width)*duration;
-              }}>
+              <div className="mb-3 cursor-pointer"
+                onClick={e => { e.stopPropagation(); const r=e.currentTarget.querySelector('div').getBoundingClientRect(); if(videoRef.current&&duration) videoRef.current.currentTime=((e.clientX-r.left)/r.width)*duration; }}>
                 <div className="h-1 hover:h-1.5 bg-white/20 rounded-full transition-all relative">
-                  <div className="absolute inset-y-0 left-0 bg-white/30 rounded-full" style={{width: duration?`${(buffered/duration)*100}%`:'0%'}} />
-                  <div className="absolute inset-y-0 left-0 bg-blue-500 rounded-full" style={{width: duration?`${(currentTime/duration)*100}%`:'0%'}} />
+                  <div className="absolute inset-y-0 left-0 bg-white/30 rounded-full"
+                    style={{width: duration?`${(buffered/duration)*100}%`:'0%'}} />
+                  <div className="absolute inset-y-0 left-0 bg-blue-500 rounded-full"
+                    style={{width: duration?`${(currentTime/duration)*100}%`:'0%'}} />
                 </div>
               </div>
               <div className="flex items-center gap-3">
