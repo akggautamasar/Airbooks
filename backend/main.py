@@ -369,37 +369,39 @@ async def get_thumbnail(source: str, chat_id: int, msg_id: int,
         raise HTTPException(500, str(e))
 
 @app.get("/api/chat-photo/{source}/{chat_id}")
-async def get_chat_photo(source: str, chat_id: int,
-                          request: Request, user: dict = Depends(require_auth)):
+async def get_chat_photo(source: str, chat_id: int, request: Request,
+                          user: dict = Depends(require_auth)):
     """Stream chat/channel profile photo"""
     from fastapi.responses import Response as FastResp
+    # Try user session first, then any available session
+    client = None
     sid = user.get("session_id")
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
         client = user_sessions[sid]
-    elif source == "discover":
+    if not client:
         client = get_discover_client()
-        if not client:
-            raise HTTPException(503, "No session")
-    else:
-        raise HTTPException(401, "Not authenticated")
+    if not client:
+        raise HTTPException(503, "No session available")
     try:
         chat = await client.get_chat(chat_id)
-        if not chat.photo:
+        if not chat or not chat.photo:
             raise HTTPException(404, "No photo")
-        # Pyrogram uses photo.small_file_id or photo.big_file_id
         photo = chat.photo
-        file_id = getattr(photo, "small_file_id", None) or getattr(photo, "big_file_id", None)
+        # Try multiple attribute names across Pyrogram versions
+        file_id = (getattr(photo, "small_file_id", None) or
+                   getattr(photo, "big_file_id", None) or
+                   getattr(photo, "file_id", None))
         if not file_id:
             raise HTTPException(404, "No photo file_id")
         data = await client.download_media(file_id, in_memory=True)
         if not data:
             raise HTTPException(404, "No photo data")
         return FastResp(content=bytes(data), media_type="image/jpeg",
-            headers={"Cache-Control":"public,max-age=3600","Access-Control-Allow-Origin":"*"})
+            headers={"Cache-Control":"public,max-age=86400","Access-Control-Allow-Origin":"*"})
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    except Exception:
+        raise HTTPException(404, "Photo not available")
 
 @app.head("/api/stream/{source}/{chat_id}/{msg_id}")
 async def stream_file_head(source: str, chat_id: int, msg_id: int,
