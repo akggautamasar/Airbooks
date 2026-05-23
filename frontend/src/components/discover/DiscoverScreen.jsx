@@ -45,7 +45,13 @@ export default function DiscoverScreen() {
   const [activeChannel, setActiveChannel] = useState(null);
 
   useEffect(() => {
-    if (state.discoverChannels.length === 0) load();
+    load();
+    // Poll every 10s until channels are ready (bot is scanning)
+    const interval = setInterval(() => {
+      if (state.discoverChannels.length === 0) load();
+      else clearInterval(interval);
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   async function load() {
@@ -53,7 +59,9 @@ export default function DiscoverScreen() {
     try {
       const res = await api.getDiscoverChannels();
       actions.setDiscover(res.channels || []);
-    } catch {}
+    } catch (e) {
+      console.error('Discover load error:', e);
+    }
     setLoading(false);
   }
 

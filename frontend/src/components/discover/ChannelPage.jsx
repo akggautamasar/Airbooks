@@ -9,6 +9,7 @@ const TABS = [
   { key: 'audio', label: 'Music',  icon: Music },
   { key: 'image', label: 'Images', icon: Image },
   { key: 'pdf',   label: 'PDFs',   icon: FileText },
+  { key: 'epub',  label: 'EPUBs',  icon: BookOpen },
 ];
 
 function formatSize(bytes) {
@@ -116,7 +117,7 @@ export default function ChannelPage({ channel, source, onBack }) {
   );
 
   function handlePlay(file) {
-    actions.play(file, source, file.channel_id);
+    actions.play(file, source);
   }
 
   return (
