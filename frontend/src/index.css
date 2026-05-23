@@ -3,20 +3,31 @@
 @tailwind utilities;
 
 @layer base {
-  * { -webkit-tap-highlight-color: transparent; }
-  html, body, #root { height: 100%; overflow: hidden; }
-  body { background: #0a0a0f; color: white; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif; }
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  html { height: 100%; }
+  body { 
+    height: 100%; 
+    background: #f2f2f7; 
+    color: #1c1c1e; 
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 }
 
 @layer utilities {
-  .pb-safe { padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
-  .pt-safe { padding-top: max(0.5rem, env(safe-area-inset-top)); }
+  .pb-safe { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .pt-safe { padding-top: max(0px, env(safe-area-inset-top)); }
+  .mb-nav { margin-bottom: 80px; }
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 3px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 999px; }
+::-webkit-scrollbar { width: 0px; }
 
-/* Video */
 video { display: block; background: #000; }
+
+/* Telefin-style card */
+.card {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}

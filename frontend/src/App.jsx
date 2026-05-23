@@ -20,10 +20,12 @@ const TABS = [
 
 function SearchScreen() {
   return (
-    <div className="flex-1 flex items-center justify-center pb-24">
+    <div className="flex-1 flex items-center justify-center">
       <div className="text-center">
-        <SearchIcon size={40} className="text-white/10 mx-auto mb-3" />
-        <p className="text-white/30 text-sm">Search coming soon</p>
+        <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+          <SearchIcon size={28} className="text-gray-300" />
+        </div>
+        <p className="text-gray-400 text-sm font-medium">Search coming soon</p>
       </div>
     </div>
   );
@@ -31,6 +33,8 @@ function SearchScreen() {
 
 export default function App() {
   const { state, actions } = useApp();
+  const mediaType = state.nowPlaying?.type;
+
   const SCREENS = {
     discover: <DiscoverScreen />,
     chats:    <ChatsScreen />,
@@ -38,40 +42,54 @@ export default function App() {
     settings: <SettingsScreen />,
   };
 
-  // Pick the right player based on media type
-  const mediaType = state.nowPlaying?.type;
-
   return (
-    <div className="h-screen bg-[#0a0a0f] text-white flex flex-col overflow-hidden">
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden relative">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f2f2f7', overflow: 'hidden' }}>
+      {/* Screen content */}
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         <AnimatePresence mode="wait">
-          <motion.div key={state.activeTab}
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="absolute inset-0 flex flex-col overflow-hidden">
+          <motion.div
+            key={state.activeTab}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+            style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          >
             {SCREENS[state.activeTab]}
           </motion.div>
         </AnimatePresence>
       </div>
 
-      {/* Bottom Navigation */}
-      <div className="relative z-50 shrink-0">
-        <div className="absolute inset-0 bg-[#0a0a0f]/95 backdrop-blur-xl border-t border-white/[0.06]" />
-        <div className="relative flex items-center justify-around pb-safe pt-1">
+      {/* Bottom Navigation - Telefin style */}
+      <div style={{
+        background: 'rgba(255,255,255,0.95)',
+        backdropFilter: 'blur(20px)',
+        borderTop: '1px solid rgba(0,0,0,0.08)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        flexShrink: 0,
+        zIndex: 50,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', padding: '8px 0' }}>
           {TABS.map(tab => {
             const Icon = tab.icon;
             const active = state.activeTab === tab.key;
             return (
-              <button key={tab.key} onClick={() => actions.setTab(tab.key)}
-                className="flex flex-col items-center gap-0.5 px-4 py-2 relative min-w-[60px]">
-                {active && (
-                  <motion.div layoutId="tab-bg"
-                    className="absolute inset-0 bg-white/[0.06] rounded-xl"
-                    transition={{ type: 'spring', damping: 25, stiffness: 300 }} />
-                )}
-                <Icon size={20} className={`relative transition-colors ${active ? 'text-blue-400' : 'text-white/35'}`} />
-                <span className={`text-[10px] font-medium relative transition-colors ${active ? 'text-blue-400' : 'text-white/30'}`}>
+              <button
+                key={tab.key}
+                onClick={() => actions.setTab(tab.key)}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
+                  padding: '6px 16px', border: 'none', background: 'none', cursor: 'pointer',
+                  minWidth: '60px', borderRadius: '12px',
+                  background: active ? '#e8f0ff' : 'transparent',
+                  transition: 'all 0.2s',
+                }}
+              >
+                <Icon size={22} color={active ? '#3478f6' : '#8e8e93'} strokeWidth={active ? 2.2 : 1.8} />
+                <span style={{
+                  fontSize: '10px', fontWeight: active ? '600' : '500',
+                  color: active ? '#3478f6' : '#8e8e93',
+                }}>
                   {tab.label}
                 </span>
               </button>
@@ -80,19 +98,21 @@ export default function App() {
         </div>
       </div>
 
-      {/* Media players — only one shows at a time */}
+      {/* Media players */}
       <AnimatePresence>
-        {mediaType === 'video'              && <VideoPlayer key="video" />}
-        {mediaType === 'image'              && <ImageViewer key="image" />}
-        {mediaType === 'audio'              && <AudioPlayer key="audio" />}
+        {mediaType === 'video'                         && <VideoPlayer key="video" />}
+        {mediaType === 'image'                         && <ImageViewer key="image" />}
+        {mediaType === 'audio'                         && <AudioPlayer key="audio" />}
         {(mediaType === 'pdf' || mediaType === 'epub') && <PDFViewer key="pdf" />}
       </AnimatePresence>
 
-      {/* Login overlay for Chats tab */}
+      {/* Login overlay */}
       <AnimatePresence>
         {state.activeTab === 'chats' && !state.isLoggedIn && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="absolute inset-0 z-40">
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+          >
             <LoginPage />
           </motion.div>
         )}
