@@ -359,6 +359,20 @@ FAST_PLAYER_HTML = open(Path(__file__).parent / "fast_player.html").read() if (P
 async def fast_player():
     return HTMLResponse(content=FAST_PLAYER_HTML)
 
+@app.get("/pdf-viewer", response_class=HTMLResponse)
+async def pdf_viewer():
+    """BeyondDrive PDF+EPUB viewer"""
+    from pathlib import Path as _Path
+    p = _Path(__file__).parent / "pdf_viewer.html"
+    return HTMLResponse(content=p.read_text() if p.exists() else "<h1>Viewer not found</h1>")
+
+@app.get("/air-player", response_class=HTMLResponse)
+async def air_player_route():
+    """BeyondDrive AirPlayer"""
+    from pathlib import Path as _Path
+    p = _Path(__file__).parent / "air_player.html"
+    return HTMLResponse(content=p.read_text() if p.exists() else "<h1>Player not found</h1>")
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "discover_channels": len(discover_cache),
