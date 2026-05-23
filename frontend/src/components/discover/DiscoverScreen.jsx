@@ -1,40 +1,43 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Film, Music, Image, BookOpen, Search, Hash, ChevronRight, RefreshCw, Play, FileText } from 'lucide-react';
+import { ChevronRight, RefreshCw, LogIn, Hash, Film, Music, Image, FileText } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useApp } from '../../store/AppContext';
 import ChannelPage from './ChannelPage';
 
-const TYPE_COLORS = {
-  video: 'from-purple-600 to-blue-600',
-  pdf:   'from-red-600 to-orange-500',
-  audio: 'from-green-600 to-teal-500',
-  image: 'from-pink-600 to-rose-500',
-  epub:  'from-amber-600 to-yellow-500',
-};
-const TYPE_ICONS = { video: Film, audio: Music, image: Image, pdf: FileText, epub: BookOpen };
+const TYPE_ICONS = { video: Film, audio: Music, image: Image, pdf: FileText, epub: FileText };
+const CHANNEL_COLORS = [
+  ['#3478f6','#5856d6'], ['#34c759','#30d158'], ['#ff9500','#ff6b00'],
+  ['#ff3b30','#ff2d55'], ['#5856d6','#af52de'], ['#00c7be','#32ade6'],
+];
 
-function ChannelCard({ channel, onClick }) {
-  const totalFiles = channel.file_count || 0;
+function ChannelCard({ channel, idx, onClick }) {
+  const [c1, c2] = CHANNEL_COLORS[idx % CHANNEL_COLORS.length];
+  const initials = (channel.name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
   return (
-    <motion.button
-      whileTap={{ scale: 0.97 }}
-      onClick={onClick}
-      className="w-full bg-white/[0.04] border border-white/[0.07] rounded-2xl p-4 text-left hover:bg-white/[0.07] transition-all"
-    >
-      <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shrink-0">
-          <Hash size={20} className="text-white/80" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-white text-sm truncate">{channel.name}</p>
-          {channel.username && <p className="text-xs text-white/40">@{channel.username}</p>}
-        </div>
-        <ChevronRight size={16} className="text-white/30 shrink-0" />
+    <motion.button whileTap={{ scale: 0.98 }} onClick={onClick}
+      style={{ width: '100%', background: 'white', borderRadius: '16px', padding: '14px 16px',
+               display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer',
+               boxShadow: '0 1px 4px rgba(0,0,0,0.08)', marginBottom: '10px', textAlign: 'left' }}>
+      <div style={{ width: '48px', height: '48px', borderRadius: '12px', flexShrink: 0,
+                    background: `linear-gradient(135deg, ${c1}, ${c2})`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'white', fontWeight: '700', fontSize: '16px' }}>
+        {initials}
       </div>
-      {channel.description && (
-        <p className="text-xs text-white/40 mt-2 line-clamp-2">{channel.description}</p>
-      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontWeight: '600', fontSize: '15px', color: '#1c1c1e', margin: 0,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {channel.name}
+        </p>
+        {channel.description && (
+          <p style={{ fontSize: '13px', color: '#8e8e93', margin: '2px 0 0',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {channel.description}
+          </p>
+        )}
+      </div>
+      <ChevronRight size={16} color="#c7c7cc" />
     </motion.button>
   );
 }
@@ -42,26 +45,31 @@ function ChannelCard({ channel, onClick }) {
 export default function DiscoverScreen() {
   const { state, actions } = useApp();
   const [loading, setLoading] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
   const [activeChannel, setActiveChannel] = useState(null);
 
   useEffect(() => {
     load();
-    // Poll every 10s until channels are ready (bot is scanning)
-    const interval = setInterval(() => {
-      if (state.discoverChannels.length === 0) load();
-      else clearInterval(interval);
-    }, 10000);
-    return () => clearInterval(interval);
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
   }, []);
 
   async function load() {
-    setLoading(true);
     try {
       const res = await api.getDiscoverChannels();
       actions.setDiscover(res.channels || []);
-    } catch (e) {
-      console.error('Discover load error:', e);
-    }
+      setHasSession(res.has_session || false);
+    } catch {}
+  }
+
+  async function handleRefresh() {
+    if (!state.isLoggedIn) return;
+    setLoading(true);
+    try {
+      await api.triggerDiscoverRefresh();
+      await new Promise(r => setTimeout(r, 2000));
+      await load();
+    } catch {}
     setLoading(false);
   }
 
@@ -70,42 +78,79 @@ export default function DiscoverScreen() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto pb-24">
+    <div style={{ flex: 1, overflowY: 'auto', background: '#f2f2f7' }}>
       {/* Header */}
-      <div className="px-5 pt-14 pb-4">
-        <div className="flex items-center justify-between">
+      <div style={{ padding: '52px 20px 16px', background: '#f2f2f7' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Discover</h1>
-            <p className="text-sm text-white/40 mt-0.5">Browse content channels</p>
+            <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#1c1c1e', margin: 0 }}>Discover</h1>
+            <p style={{ fontSize: '14px', color: '#8e8e93', margin: '2px 0 0' }}>Browse content channels</p>
           </div>
-          <button onClick={load} className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center">
-            <RefreshCw size={15} className={`text-white/60 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          {state.isLoggedIn && (
+            <button onClick={handleRefresh} style={{ width: '36px', height: '36px', borderRadius: '10px',
+              background: 'white', border: 'none', cursor: 'pointer', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+              <RefreshCw size={16} color="#3478f6" className={loading ? 'animate-spin' : ''} />
+            </button>
+          )}
         </div>
       </div>
 
-      {loading && state.discoverChannels.length === 0 ? (
-        <div className="flex items-center justify-center h-40">
-          <RefreshCw size={20} className="animate-spin text-white/30" />
-        </div>
-      ) : state.discoverChannels.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-40 gap-2">
-          <Hash size={32} className="text-white/10" />
-          <p className="text-sm text-white/30">No channels configured</p>
-          <p className="text-xs text-white/20">Add BOT_CHANNELS to your .env</p>
-        </div>
-      ) : (
-        <div className="px-5 space-y-3">
-          {state.discoverChannels.map((ch, i) => (
-            <motion.div key={ch.str_id || ch.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}>
-              <ChannelCard channel={ch} onClick={() => setActiveChannel(ch)} />
-            </motion.div>
-          ))}
-        </div>
-      )}
+      <div style={{ padding: '0 16px 100px' }}>
+        {/* Not logged in */}
+        {!state.isLoggedIn && (
+          <div style={{ background: 'white', borderRadius: '16px', padding: '24px',
+                        textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', marginBottom: '16px' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '14px',
+                          background: '#e8f0ff', display: 'flex', alignItems: 'center',
+                          justifyContent: 'center', margin: '0 auto 12px' }}>
+              <LogIn size={24} color="#3478f6" />
+            </div>
+            <p style={{ fontWeight: '600', fontSize: '16px', color: '#1c1c1e', margin: '0 0 6px' }}>
+              Login to load channels
+            </p>
+            <p style={{ fontSize: '13px', color: '#8e8e93', margin: '0 0 16px', lineHeight: '1.5' }}>
+              Discover channels need your Telegram account to scan content. Go to Chats tab to login.
+            </p>
+            <button onClick={() => actions.setTab('chats')}
+              style={{ background: '#3478f6', color: 'white', border: 'none', borderRadius: '12px',
+                       padding: '10px 24px', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}>
+              Login with Telegram
+            </button>
+          </div>
+        )}
+
+        {/* Logged in but scanning */}
+        {state.isLoggedIn && !hasSession && state.discoverChannels.length === 0 && (
+          <div style={{ background: 'white', borderRadius: '16px', padding: '24px',
+                        textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', marginBottom: '16px' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '50%', border: '3px solid #e8f0ff',
+                          borderTopColor: '#3478f6', animation: 'spin 1s linear infinite',
+                          margin: '0 auto 12px' }} />
+            <p style={{ fontWeight: '600', fontSize: '15px', color: '#1c1c1e', margin: '0 0 4px' }}>
+              Scanning channels...
+            </p>
+            <p style={{ fontSize: '13px', color: '#8e8e93', margin: 0 }}>
+              This may take a few minutes for large channels
+            </p>
+          </div>
+        )}
+
+        {/* Channels list */}
+        {state.discoverChannels.length > 0 && (
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: '600', color: '#8e8e93',
+                        textTransform: 'uppercase', letterSpacing: '0.5px',
+                        margin: '0 4px 10px', padding: '0' }}>
+              CHANNELS
+            </p>
+            {state.discoverChannels.map((ch, i) => (
+              <ChannelCard key={ch.str_id || ch.id} channel={ch} idx={i}
+                onClick={() => setActiveChannel(ch)} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
