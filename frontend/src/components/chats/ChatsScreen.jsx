@@ -46,15 +46,28 @@ export default function ChatsScreen() {
   const [search, setSearch] = useState('');
   const [activeChat, setActiveChat] = useState(null);
 
+  const CHAT_CACHE = 'airbooks_chats_v1';
+
   useEffect(() => {
-    if (state.isLoggedIn && state.userChats.length === 0) load();
+    if (!state.isLoggedIn) return;
+    // Load from cache instantly
+    try {
+      const cached = JSON.parse(localStorage.getItem(CHAT_CACHE) || 'null');
+      if (cached?.chats?.length) {
+        actions.setChats(cached.chats);
+      }
+    } catch {}
+    // Then refresh in background
+    load(state.userChats.length === 0);
   }, [state.isLoggedIn]);
 
-  async function load() {
-    setLoading(true);
+  async function load(showSpinner = true) {
+    if (showSpinner) setLoading(true);
     try {
       const res = await api.getChats();
-      actions.setChats(res.chats || []);
+      const chats = res.chats || [];
+      actions.setChats(chats);
+      localStorage.setItem(CHAT_CACHE, JSON.stringify({ chats, ts: Date.now() }));
     } catch {}
     setLoading(false);
   }
