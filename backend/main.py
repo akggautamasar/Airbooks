@@ -348,7 +348,11 @@ async def get_user_chats(client: Client = Depends(get_user_client)):
 
 @app.get("/api/chats/{chat_id}/files")
 async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
-                         client: Client = Depends(get_user_client)):
+                         user: dict = Depends(require_auth)):
+    sid = user.get("session_id") if user else None
+    client = (user_sessions.get(sid) if sid and sid in user_sessions
+              and user_sessions[sid].is_connected else None) or get_discover_client()
+    if not client: raise HTTPException(503, "No session")
     chat_id_str = str(chat_id)
 
     # Return from cache if available and not forcing refresh
