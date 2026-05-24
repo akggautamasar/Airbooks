@@ -56,10 +56,16 @@ export const api = {
   // User chats
   getChats: () => req('/chats'),
 
-  async getChatFiles(id, type) {
-    const cached = FILE_CACHE.get(id, type);
-    if (cached) return { files: cached };
-    const res = await req(`/chats/${id}/files${type ? '?type=' + type : ''}`);
+  async getChatFiles(id, type, forceRefresh = false) {
+    // If forcing refresh, skip sessionStorage cache and tell backend to re-scan
+    if (!forceRefresh) {
+      const cached = FILE_CACHE.get(id, type);
+      if (cached) return { files: cached };
+    }
+    const params = new URLSearchParams();
+    if (type) params.set('type', type);
+    if (forceRefresh) params.set('refresh', 'true');
+    const res = await req(`/chats/${id}/files?${params}`);
     if (res.files) FILE_CACHE.set(id, type, res.files);
     return res;
   },
