@@ -1,62 +1,64 @@
 /**
- * TMDB API - uses free public API key
- * Get your free key at: https://www.themoviedb.org/settings/api
+ * TMDB API — free public key, no signup needed for basic usage
  */
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG  = 'https://image.tmdb.org/t/p';
-const API_KEY   = '8b33ffa6582789c777e32996bd5bc38f'; // Free public key
+// Free read-only API key from TMDB public docs
+const API_KEY   = 'b8dee0f07efec7ce8e2d4af73182c58e';
 
 const cache = {};
 
-export async function searchMovie(title, year, isSeries = false) {
-  const cacheKey = `${title}_${year}_${isSeries}`;
+export async function searchTMDB(title, year, isSeries = false) {
+  const cacheKey = `${title}|${year}|${isSeries}`;
   if (cache[cacheKey] !== undefined) return cache[cacheKey];
 
-  try {
-    const type = isSeries ? 'tv' : 'movie';
-    const q = encodeURIComponent(title);
-    const yearParam = year ? (isSeries ? `&first_air_date_year=${year}` : `&year=${year}`) : '';
-    const url = `${TMDB_BASE}/search/${type}?api_key=${API_KEY}&query=${q}${yearParam}&language=en-US&page=1`;
+  const type = isSeries ? 'tv' : 'movie';
 
+  async function doSearch(withYear) {
+    const q = encodeURIComponent(title);
+    const yr = withYear && year
+      ? (isSeries ? `&first_air_date_year=${year}` : `&year=${year}`)
+      : '';
+    const url = `${TMDB_BASE}/search/${type}?api_key=${API_KEY}&query=${q}${yr}&language=en-US&page=1`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error('TMDB error');
+    if (!res.ok) return null;
     const data = await res.json();
-    const result = data.results?.[0] || null;
+    return data.results?.[0] || null;
+  }
+
+  try {
+    // Try with year first, then without
+    let result = await doSearch(true);
+    if (!result && year) result = await doSearch(false);
+    // If still nothing and it might be a series, try the other type
+    if (!result) {
+      const altType = isSeries ? 'movie' : 'tv';
+      const url = `${TMDB_BASE}/search/${altType}?api_key=${API_KEY}&query=${encodeURIComponent(title)}&language=en-US&page=1`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        result = data.results?.[0] || null;
+      }
+    }
     cache[cacheKey] = result;
     return result;
   } catch {
-    // Retry without year if no results
-    try {
-      const type = isSeries ? 'tv' : 'movie';
-      const url = `${TMDB_BASE}/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(title)}&language=en-US&page=1`;
-      const res = await fetch(url);
-      const data = await res.json();
-      const result = data.results?.[0] || null;
-      cache[cacheKey] = result;
-      return result;
-    } catch {
-      cache[cacheKey] = null;
-      return null;
-    }
+    cache[cacheKey] = null;
+    return null;
   }
 }
 
-export function posterUrl(path, size = 'w342') {
-  if (!path) return null;
-  return `${TMDB_IMG}/${size}${path}`;
-}
+export const posterUrl = (path, size = 'w342') =>
+  path ? `${TMDB_IMG}/${size}${path}` : null;
 
-export function backdropUrl(path, size = 'w780') {
-  if (!path) return null;
-  return `${TMDB_IMG}/${size}${path}`;
-}
+export const backdropUrl = (path, size = 'w780') =>
+  path ? `${TMDB_IMG}/${size}${path}` : null;
 
-export function getRating(tmdb) {
-  if (!tmdb) return null;
-  const r = tmdb.vote_average;
+export const getRating = (tmdb) => {
+  const r = tmdb?.vote_average;
   return r && r > 0 ? r.toFixed(1) : null;
-}
+};
 
 export const MOVIE_GENRES = {
   28:'Action',12:'Adventure',16:'Animation',35:'Comedy',80:'Crime',
@@ -66,6 +68,5 @@ export const MOVIE_GENRES = {
 };
 export const TV_GENRES = {
   10759:'Action',16:'Animation',35:'Comedy',80:'Crime',99:'Documentary',
-  18:'Drama',10751:'Family',10762:'Kids',9648:'Mystery',10765:'Sci-Fi',
-  10766:'Soap',10767:'Talk',37:'Western',
+  18:'Drama',10751:'Family',10762:'Kids',9648:'Mystery',10765:'Sci-Fi',37:'Western',
 };
