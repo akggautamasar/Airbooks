@@ -385,21 +385,29 @@ async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
                           "has_thumb": bool(getattr(media,"thumbs",None))})
     except Exception as e: raise HTTPException(500, str(e))
 
+    # Try to get channel name
+    try:
+        chat_obj = await client.get_chat(chat_id)
+        channel_name = getattr(chat_obj, "title", None) or str(chat_id)
+    except Exception:
+        channel_name = str(chat_id)
+
     # Save to memory cache
     async with _file_cache_lock:
         file_cache[chat_id_str] = {
             "files": files,
             "scanned_at": datetime.utcnow().isoformat(),
-            "channel_name": str(chat_id),
+            "channel_name": channel_name,
+            "file_count": len(files),
         }
 
     # Save to Telegram cache channel in background
     if config.CACHE_CHANNEL_ID:
-        asyncio.create_task(save_cache(client, chat_id, files, str(chat_id)))
+        asyncio.create_task(save_cache(client, chat_id, files, channel_name))
 
     # Return filtered by type
     filtered = [f for f in files if not type or f.get("type") == type]
-    return {"files": filtered, "from_cache": False}
+    return {"files": filtered, "from_cache": False, "total_scanned": len(files)}
 
 # ─── Streaming ────────────────────────────────────────────────────────────────
 @app.get("/api/stream/{source}/{chat_id}/{msg_id}")
@@ -466,12 +474,21 @@ async def get_thumbnail(source: str, chat_id: int, msg_id: int,
     except Exception as e:
         raise HTTPException(500, str(e))
 
+# In-memory photo cache: chat_id -> bytes
+_photo_cache: Dict[int, bytes] = {}
+
 @app.get("/api/chat-photo/{source}/{chat_id}")
 async def get_chat_photo(source: str, chat_id: int, request: Request,
                           user: dict = Depends(require_auth)):
     """Stream chat/channel profile photo"""
     from fastapi.responses import Response as FastResp
-    # Try user session first, then any available session
+
+    # Serve from memory cache if available (avoids repeated Telegram API calls)
+    if chat_id in _photo_cache:
+        return FastResp(content=_photo_cache[chat_id], media_type="image/jpeg",
+            headers={"Cache-Control":"public,max-age=86400","Access-Control-Allow-Origin":"*"})
+
+    # Try user session first
     client = None
     sid = user.get("session_id")
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
@@ -480,12 +497,14 @@ async def get_chat_photo(source: str, chat_id: int, request: Request,
         client = get_discover_client()
     if not client:
         raise HTTPException(503, "No session available")
+
     try:
+        # get_chat works for channels/supergroups even without prior resolution
+        # For private users it may fail — that's fine, initials are shown instead
         chat = await client.get_chat(chat_id)
         if not chat or not chat.photo:
             raise HTTPException(404, "No photo")
         photo = chat.photo
-        # Try multiple attribute names across Pyrogram versions
         file_id = (getattr(photo, "small_file_id", None) or
                    getattr(photo, "big_file_id", None) or
                    getattr(photo, "file_id", None))
@@ -494,11 +513,13 @@ async def get_chat_photo(source: str, chat_id: int, request: Request,
         data = await client.download_media(file_id, in_memory=True)
         if not data:
             raise HTTPException(404, "No photo data")
-        return FastResp(content=bytes(data), media_type="image/jpeg",
+        photo_bytes = bytes(data)
+        _photo_cache[chat_id] = photo_bytes  # Cache in memory
+        return FastResp(content=photo_bytes, media_type="image/jpeg",
             headers={"Cache-Control":"public,max-age=86400","Access-Control-Allow-Origin":"*"})
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         raise HTTPException(404, "Photo not available")
 
 @app.head("/api/stream/{source}/{chat_id}/{msg_id}")
@@ -551,9 +572,48 @@ async def air_player_route():
     p = _Path(__file__).parent / "air_player.html"
     return HTMLResponse(content=p.read_text() if p.exists() else "<h1>Player not found</h1>")
 
+@app.get("/", response_class=HTMLResponse)
+async def homepage():
+    """Simple status page — keep-alive for UptimeRobot"""
+    sessions = len(user_sessions)
+    cached = len(file_cache)
+    discover = len(discover_cache)
+    status = "🟢 Online" if sessions > 0 else "🟡 Waiting for login"
+    html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>AirBooks API</title>
+<meta http-equiv="refresh" content="60">
+<style>
+body{{font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+.card{{background:#ffffff10;border:1px solid #ffffff15;border-radius:20px;padding:40px;max-width:400px;width:90%;text-align:center}}
+h1{{font-size:28px;margin:0 0 8px;background:linear-gradient(135deg,#3478f6,#5856d6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
+.status{{font-size:18px;margin:20px 0;font-weight:600}}
+.grid{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:20px}}
+.stat{{background:#ffffff08;border-radius:12px;padding:14px 8px}}
+.stat-num{{font-size:24px;font-weight:800;color:#3478f6}}
+.stat-label{{font-size:11px;color:#8e8e93;margin-top:4px}}
+</style></head>
+<body><div class="card">
+<h1>AirBooks</h1>
+<p style="color:#8e8e93;margin:0">Telegram Media Platform</p>
+<div class="status">{status}</div>
+<div class="grid">
+<div class="stat"><div class="stat-num">{sessions}</div><div class="stat-label">Sessions</div></div>
+<div class="stat"><div class="stat-num">{cached}</div><div class="stat-label">Cached</div></div>
+<div class="stat"><div class="stat-num">{discover}</div><div class="stat-label">Discover</div></div>
+</div>
+</div></body></html>"""
+    return HTMLResponse(content=html)
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "discover_channels": len(discover_cache),
-            "discover_ready": _discover_done, "active_sessions": len(user_sessions),
-            "has_discover_session": get_discover_client() is not None,
-            "bot_channels": config.BOT_CHANNELS}
+    """Health check endpoint for UptimeRobot — returns 200 always"""
+    return {
+        "status": "ok",
+        "active_sessions": len(user_sessions),
+        "cached_channels": len(file_cache),
+        "discover_channels": len(discover_cache),
+        "discover_ready": _discover_done,
+        "has_session": get_discover_client() is not None,
+        "photo_cache_size": len(_photo_cache),
+    }
