@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Compass, MessageCircle, Search as SearchIcon, Settings } from 'lucide-react';
 import { useApp } from './store/AppContext';
 import LoginPage from './pages/LoginPage';
+import InstallPrompt from './components/ui/InstallPrompt';
 import DiscoverScreen from './components/discover/DiscoverScreen';
 import ChatsScreen from './components/chats/ChatsScreen';
 import SettingsScreen from './components/ui/SettingsScreen';
@@ -105,6 +106,8 @@ export default function App() {
         {mediaType === 'audio'                         && <AudioPlayer key="audio" />}
         {(mediaType === 'pdf' || mediaType === 'epub') && <PDFViewer key="pdf" />}
       </AnimatePresence>
+
+      <InstallPrompt />
 
       {/* Login overlay */}
       <AnimatePresence>
