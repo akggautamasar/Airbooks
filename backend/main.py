@@ -576,7 +576,7 @@ async def air_player_route():
     p = _Path(__file__).parent / "air_player.html"
     return HTMLResponse(content=p.read_text() if p.exists() else "<h1>Player not found</h1>")
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET","HEAD"], response_class=HTMLResponse)
 async def homepage():
     """Simple status page — keep-alive for UptimeRobot"""
     sessions = len(user_sessions)
@@ -609,7 +609,7 @@ h1{{font-size:28px;margin:0 0 8px;background:linear-gradient(135deg,#3478f6,#585
 </div></body></html>"""
     return HTMLResponse(content=html)
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """Health check endpoint for UptimeRobot — returns 200 always"""
     return {
