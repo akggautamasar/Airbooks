@@ -284,20 +284,25 @@ function GridCard({ movie, onTap }) {
   const [g1,g2] = grad(movie.id);
   return (
     <button onClick={()=>onTap(movie)} style={{
-      background:'none', border:'none', cursor:'pointer', padding:0, textAlign:'left', width:'100%',
+      background:'none', border:'none', cursor:'pointer', padding:0,
+      textAlign:'left', width:'100%', minWidth:0, boxSizing:'border-box', display:'block',
     }}>
-      <div style={{width:'100%', paddingTop:'150%', position:'relative',
-                   borderRadius:'12px', overflow:'hidden',
-                   background:`linear-gradient(135deg,${g1},${g2})`,
-                   marginBottom:'6px', boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
+      {/* Poster — fixed 2:3 aspect ratio, never overflows its column */}
+      <div style={{
+        width:'100%', aspectRatio:'2/3',
+        position:'relative', borderRadius:'10px', overflow:'hidden',
+        background:`linear-gradient(135deg,${g1},${g2})`,
+        marginBottom:'5px', boxShadow:'0 2px 6px rgba(0,0,0,0.14)',
+        flexShrink:0,
+      }}>
         {movie.poster && !failed
           ? <img src={movie.poster} alt={movie.title}
-              style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+              style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',display:'block'}}
               onError={()=>setFailed(true)}/>
           : <div style={{position:'absolute',inset:0,display:'flex',
                          alignItems:'center',justifyContent:'center',flexDirection:'column',gap:'4px',padding:'6px'}}>
-              <Film size={20} color="rgba(255,255,255,0.5)"/>
-              <p style={{color:'rgba(255,255,255,0.7)',fontSize:'9px',fontWeight:'600',
+              <Film size={18} color="rgba(255,255,255,0.5)"/>
+              <p style={{color:'rgba(255,255,255,0.7)',fontSize:'8px',fontWeight:'600',
                          textAlign:'center',margin:0,lineHeight:'1.3',
                          overflow:'hidden',display:'-webkit-box',
                          WebkitLineClamp:3,WebkitBoxOrient:'vertical'}}>
@@ -306,24 +311,25 @@ function GridCard({ movie, onTap }) {
             </div>
         }
         {movie.rating && (
-          <div style={{position:'absolute',top:'5px',right:'5px',
-            background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
-            padding:'2px 5px',borderRadius:'4px',
+          <div style={{position:'absolute',top:'4px',right:'4px',
+            background:'#e91e8c',color:'white',fontSize:'8px',fontWeight:'700',
+            padding:'1px 4px',borderRadius:'4px',
             display:'flex',alignItems:'center',gap:'2px'}}>
-            <Star size={7} fill="white" strokeWidth={0}/> {movie.rating}
+            <Star size={6} fill="white" strokeWidth={0}/> {movie.rating}
           </div>
         )}
-        <div style={{position:'absolute',top:'5px',left:'5px',
-          background:'rgba(0,0,0,0.6)',color:'white',fontSize:'8px',fontWeight:'700',
-          padding:'1px 5px',borderRadius:'3px'}}>
+        <div style={{position:'absolute',top:'4px',left:'4px',
+          background:'rgba(0,0,0,0.65)',color:'white',fontSize:'7px',fontWeight:'700',
+          padding:'1px 4px',borderRadius:'3px'}}>
           {movie.isSeries?'TV':'MOVIE'}
         </div>
       </div>
-      <p style={{fontSize:'11px',fontWeight:'600',color:'#1c1c1e',margin:'0 0 1px',
-                 overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+      <p style={{fontSize:'10px',fontWeight:'600',color:'#1c1c1e',margin:'0 0 1px',
+                 overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+                 width:'100%', boxSizing:'border-box'}}>
         {movie.title}
       </p>
-      <p style={{fontSize:'10px',color:'#8e8e93',margin:0}}>{movie.year}</p>
+      <p style={{fontSize:'9px',color:'#8e8e93',margin:0}}>{movie.year}</p>
     </button>
   );
 }
@@ -604,7 +610,7 @@ function GridView({ title, movies, onBack, onTap }) {
   const filtered = movies.filter(m=>!q||m.title.toLowerCase().includes(q.toLowerCase()));
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',background:'#f2f2f7',overflow:'hidden'}}>
-      <div style={{padding:'50px 16px 10px',background:'#f2f2f7',flexShrink:0}}>
+      <div style={{padding:'50px 12px 10px',background:'#f2f2f7',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}}>
           <button onClick={onBack} style={{width:'36px',height:'36px',borderRadius:'10px',
             background:'white',border:'none',cursor:'pointer',display:'flex',
@@ -622,8 +628,8 @@ function GridView({ title, movies, onBack, onTap }) {
               color:'#1c1c1e',outline:'none',boxShadow:'0 1px 3px rgba(0,0,0,0.08)'}}/>
         </div>
       </div>
-      <div style={{flex:1,overflowY:'auto',padding:'8px 16px 100px'}}>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+      <div style={{flex:1,overflowY:'auto',padding:'6px 12px 100px', overflowX:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px'}}>
           {filtered.map(m=><GridCard key={m.id} movie={m} onTap={onTap}/>)}
         </div>
       </div>
@@ -635,7 +641,7 @@ function GridView({ title, movies, onBack, onTap }) {
 function BookmarksView({ bookmarks, onBack, onTap, onRemove }) {
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',background:'#f2f2f7',overflow:'hidden'}}>
-      <div style={{padding:'50px 16px 10px',background:'#f2f2f7',flexShrink:0}}>
+      <div style={{padding:'50px 12px 10px',background:'#f2f2f7',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}}>
           <button onClick={onBack} style={{width:'36px',height:'36px',borderRadius:'10px',
             background:'white',border:'none',cursor:'pointer',display:'flex',
@@ -653,7 +659,7 @@ function BookmarksView({ bookmarks, onBack, onTap, onRemove }) {
               <p style={{color:'#8e8e93',fontSize:'15px',fontWeight:'500',margin:0}}>No bookmarks yet</p>
               <p style={{color:'#c7c7cc',fontSize:'13px',margin:'6px 0 0'}}>Tap the bookmark icon on any title to save it</p>
             </div>
-          : <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+          : <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px'}}>
               {bookmarks.map(m=><GridCard key={m.id} movie={m} onTap={onTap}/>)}
             </div>
         }
@@ -805,7 +811,7 @@ export default function DiscoverScreen() {
                   <p style={{fontSize:'13px',color:'#8e8e93',margin:'0 0 14px',fontWeight:'500'}}>
                     {searchResults.length} results
                   </p>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px'}}>
                     {searchResults.map(m=><GridCard key={m.id} movie={m} onTap={setDetail}/>)}
                   </div>
                 </>
