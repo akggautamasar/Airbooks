@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { Play, Star, ChevronRight, RefreshCw, Film, Tv, Search, X, ArrowLeft } from 'lucide-react';
 import { api } from '../../utils/api';
 import { groupMovies } from '../../utils/movieParser';
-import { searchTMDB, posterUrl, backdropUrl, getRating, MOVIE_GENRES, TV_GENRES } from '../../utils/tmdb';
+import { searchTMDB, posterUrl, backdropUrl, getRating, getOverview, MOVIE_GENRES, TV_GENRES } from '../../utils/tmdb';
 
 const AIR_MOVIES_ID = '-1003930241514';
 
@@ -21,16 +21,18 @@ function gradientFor(id) {
 
 // ── Enrich group with TMDB ─────────────────────────────────────────────────
 async function enrich(group) {
-  const tmdb = await searchTMDB(group.title, group.year, group.isSeries);
+  const data = await searchTMDB(group.title, group.year, group.isSeries);
   const gmap = group.isSeries ? TV_GENRES : MOVIE_GENRES;
+  const genreNames = data?.source === 'omdb' && data?.genres_text
+    ? data.genres_text.split(',').slice(0,2).map(g => g.trim())
+    : (data?.genre_ids || []).slice(0, 2).map(id => gmap[id]).filter(Boolean);
   return {
     ...group,
-    tmdb,
-    poster:   posterUrl(tmdb?.poster_path, 'w342'),
-    backdrop: backdropUrl(tmdb?.backdrop_path, 'w780'),
-    rating:   getRating(tmdb),
-    overview: tmdb?.overview || '',
-    genres:   (tmdb?.genre_ids || []).slice(0, 2).map(id => gmap[id]).filter(Boolean),
+    poster:   posterUrl(data),
+    backdrop: backdropUrl(data),
+    rating:   getRating(data),
+    overview: getOverview(data),
+    genres:   genreNames,
   };
 }
 
@@ -384,10 +386,14 @@ export default function DiscoverScreen() {
   const [search, setSearch]     = useState('');
   const [showSearch, setShowSearch] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
+    // Clear local cache on refresh
+    if (forceRefresh) {
+      try { sessionStorage.removeItem(`ab_files_d_${AIR_MOVIES_ID}_video`); } catch {}
+    }
     try {
-      const res = await api.getChannelFiles(AIR_MOVIES_ID, 'video');
+      const res = await api.getChannelFiles(AIR_MOVIES_ID, 'video', forceRefresh);
       const files = res.files || [];
       const groups = groupMovies(files);
       const enriched = [];
@@ -470,7 +476,7 @@ export default function DiscoverScreen() {
                 border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
                 justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
               }}><Search size={15} color="#3478f6" /></button>
-              <button onClick={load} style={{
+              <button onClick={() => load(true)} style={{
                 width: '36px', height: '36px', borderRadius: '10px', background: 'white',
                 border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
                 justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
