@@ -4,115 +4,107 @@ import { api } from '../../utils/api';
 import { useApp } from '../../store/AppContext';
 import ChannelPage from '../discover/ChannelPage';
 
-const PALETTE = [
+const COLORS = [
   '#9C27B0','#00BCD4','#3F51B5','#E91E63',
   '#4CAF50','#FF5722','#2196F3','#FF9800',
   '#009688','#F44336','#673AB7','#607D8B',
 ];
 
-function initials(name) {
-  const w = (name || '').trim().split(/\s+/);
-  if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase();
-  return (name || '?').slice(0, 2).toUpperCase();
+function getInitials(name) {
+  const words = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return (name || '??').slice(0, 2).toUpperCase();
 }
 
-function ChatAvatar({ chat }) {
-  const [failed, setFailed] = useState(false);
-  const color = PALETTE[Math.abs(chat.id || 0) % PALETTE.length];
-  const ini = initials(chat.name);
-
-  const fallback = (
-    <div style={{
-      width: '100%', aspectRatio: '1/1',
-      background: color,
-      borderRadius: '14px',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      color: 'white', fontWeight: '800', fontSize: '18px',
-      flexShrink: 0,
-    }}>
-      {ini}
-    </div>
-  );
-
-  if (failed) return fallback;
-
-  return (
-    <div style={{ width: '100%', aspectRatio: '1/1', borderRadius: '14px', overflow: 'hidden', flexShrink: 0 }}>
-      <img
-        src={api.chatPhotoUrl('user', chat.id)}
-        alt=""
-        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-        onError={() => setFailed(true)}
-      />
-    </div>
-  );
+function getColor(id) {
+  return COLORS[Math.abs(Number(id) || 0) % COLORS.length];
 }
 
 function ChatCard({ chat, onClick }) {
-  const type = chat.type === 'channel' ? 'Channel'
+  const [imgFailed, setImgFailed] = useState(false);
+  const color = getColor(chat.id);
+  const ini = getInitials(chat.name);
+  const typeLabel = chat.type === 'channel' ? 'Channel'
     : (chat.type === 'group' || chat.type === 'supergroup') ? 'Group'
     : 'Chat';
 
   return (
-    <button onClick={onClick} style={{
-      background: 'white',
-      borderRadius: '16px',
-      border: 'none',
-      cursor: 'pointer',
-      padding: '12px 8px 10px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: '7px',
-      boxShadow: '0 1px 5px rgba(0,0,0,0.08)',
-      position: 'relative',
-      width: '100%',
-      boxSizing: 'border-box',
-    }}>
-      <ChatAvatar chat={chat} />
-      <span style={{
-        fontSize: '11px', fontWeight: '600', color: '#1c1c1e',
-        textAlign: 'center', width: '100%',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        lineHeight: '1.3',
-      }}>
-        {chat.name}
-      </span>
-      <span style={{
-        fontSize: '9px', fontWeight: '600', color: '#8e8e93',
-        background: '#f2f2f7', borderRadius: '5px', padding: '1px 6px',
-        lineHeight: '1.6',
-      }}>
-        {type}
-      </span>
-      {chat.unread > 0 && (
+    <button
+      onClick={onClick}
+      style={{
+        background: 'white',
+        borderRadius: '16px',
+        border: 'none',
+        cursor: 'pointer',
+        padding: '0',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        boxShadow: '0 1px 6px rgba(0,0,0,0.09)',
+        position: 'relative',
+        overflow: 'hidden',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      {/* Photo square — fixed padding-top trick for true square */}
+      <div style={{ position: 'relative', width: '100%', paddingTop: '100%' }}>
+        {/* Colored background always rendered — image overlays it */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: color,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: 'white', fontWeight: '800', fontSize: '22px',
+          borderRadius: '16px 16px 0 0',
+        }}>
+          {ini}
+        </div>
+        {/* Image on top — if it loads it covers initials, if not initials show */}
+        {!imgFailed && (
+          <img
+            src={api.chatPhotoUrl('user', chat.id)}
+            alt=""
+            onError={() => setImgFailed(true)}
+            style={{
+              position: 'absolute', inset: 0,
+              width: '100%', height: '100%',
+              objectFit: 'cover',
+              borderRadius: '16px 16px 0 0',
+            }}
+          />
+        )}
+      </div>
+
+      {/* Text area */}
+      <div style={{ padding: '8px 8px 10px', textAlign: 'center' }}>
+        <p style={{
+          fontSize: '11px', fontWeight: '600', color: '#1c1c1e',
+          margin: '0 0 5px', lineHeight: '1.3',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {chat.name}
+        </p>
         <span style={{
-          position: 'absolute', top: '8px', right: '8px',
+          display: 'inline-block',
+          fontSize: '9px', fontWeight: '600', color: '#8e8e93',
+          background: '#f2f2f7', borderRadius: '5px', padding: '1px 7px',
+        }}>
+          {typeLabel}
+        </span>
+      </div>
+
+      {/* Unread badge */}
+      {chat.unread > 0 && (
+        <div style={{
+          position: 'absolute', top: '6px', right: '6px',
           background: '#3478f6', color: 'white',
           fontSize: '9px', fontWeight: '800',
-          borderRadius: '8px', padding: '1px 5px',
-          minWidth: '16px', textAlign: 'center', lineHeight: '14px',
+          borderRadius: '8px', padding: '2px 5px',
+          minWidth: '16px', textAlign: 'center', lineHeight: '13px',
         }}>
           {chat.unread > 99 ? '99+' : chat.unread}
-        </span>
+        </div>
       )}
     </button>
-  );
-}
-
-// Pure CSS grid — no flex, no overflow issues
-function ChatGrid({ chats, onSelect }) {
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3, 1fr)',
-      gap: '10px',
-      width: '100%',
-    }}>
-      {chats.map(c => (
-        <ChatCard key={c.id} chat={c} onClick={() => onSelect(c)} />
-      ))}
-    </div>
   );
 }
 
@@ -132,19 +124,12 @@ export default function ChatsScreen() {
   const [filter, setFilter] = useState('all');
   const [activeChat, setActiveChat] = useState(null);
 
-  // Load from cache first, then refresh
   useEffect(() => {
     if (!state.isLoggedIn) return;
-    // Instant load from cache
-    if (state.userChats.length === 0) {
-      try {
-        const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-        if (cached?.chats?.length) {
-          actions.setChats(cached.chats);
-        }
-      } catch {}
-    }
-    // Background refresh
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+      if (cached?.chats?.length) actions.setChats(cached.chats);
+    } catch {}
     refresh(state.userChats.length === 0);
   }, [state.isLoggedIn]);
 
@@ -165,26 +150,32 @@ export default function ChatsScreen() {
 
   const visible = state.userChats.filter(c => {
     const q = search.toLowerCase();
-    const matchSearch = !q || c.name.toLowerCase().includes(q) || (c.username || '').toLowerCase().includes(q);
+    const matchSearch = !q
+      || c.name.toLowerCase().includes(q)
+      || (c.username || '').toLowerCase().includes(q);
     const matchFilter = filter === 'all'
-      || (filter === 'group' ? c.type === 'group' || c.type === 'supergroup' : c.type === filter);
+      || (filter === 'group'
+        ? c.type === 'group' || c.type === 'supergroup'
+        : c.type === filter);
     return matchSearch && matchFilter;
   });
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f2f2f7', overflow: 'hidden' }}>
 
-      {/* Fixed header */}
+      {/* Header */}
       <div style={{ flexShrink: 0, background: '#f2f2f7', padding: '50px 16px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
           <span style={{ fontSize: '26px', fontWeight: '800', color: '#1c1c1e' }}>Chats</span>
           {state.isLoggedIn && (
             <button onClick={() => refresh(true)} style={{
               width: '36px', height: '36px', borderRadius: '10px', background: 'white',
-              border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
-              justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+              border: 'none', cursor: 'pointer', display: 'flex',
+              alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
             }}>
-              <RefreshCw size={15} color="#3478f6" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+              <RefreshCw size={15} color="#3478f6"
+                style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
             </button>
           )}
         </div>
@@ -192,52 +183,74 @@ export default function ChatsScreen() {
         {state.isLoggedIn && (
           <>
             <div style={{ position: 'relative', marginBottom: '10px' }}>
-              <Search size={14} color="#8e8e93" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chats..."
+              <Search size={14} color="#8e8e93" style={{
+                position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)',
+              }} />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search chats..."
                 style={{
-                  width: '100%', background: 'white', border: 'none', borderRadius: '12px',
+                  width: '100%', boxSizing: 'border-box',
+                  background: 'white', border: 'none', borderRadius: '12px',
                   padding: '10px 12px 10px 36px', fontSize: '14px', color: '#1c1c1e',
-                  outline: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', boxSizing: 'border-box',
-                }} />
+                  outline: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                }}
+              />
             </div>
 
-            <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: '2px' }}>
+            <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', scrollbarWidth: 'none' }}>
               {FILTERS.map(f => (
                 <button key={f.key} onClick={() => setFilter(f.key)} style={{
-                  flexShrink: 0, padding: '5px 14px', borderRadius: '16px', border: 'none', cursor: 'pointer',
-                  fontWeight: '600', fontSize: '12px',
+                  flexShrink: 0, padding: '5px 14px', borderRadius: '16px',
+                  border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px',
                   background: filter === f.key ? '#3478f6' : 'white',
                   color: filter === f.key ? 'white' : '#636366',
-                  boxShadow: filter === f.key ? '0 2px 6px rgba(52,120,246,0.25)' : '0 1px 3px rgba(0,0,0,0.08)',
-                }}>{f.label}</button>
+                  boxShadow: filter === f.key
+                    ? '0 2px 6px rgba(52,120,246,0.25)'
+                    : '0 1px 3px rgba(0,0,0,0.08)',
+                }}>
+                  {f.label}
+                </button>
               ))}
             </div>
           </>
         )}
       </div>
 
-      {/* Scrollable grid */}
+      {/* Grid */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 12px 100px' }}>
         {!state.isLoggedIn ? (
-          <div style={{ textAlign: 'center', padding: '60px 24px', color: '#8e8e93' }}>
-            <p style={{ fontSize: '17px', fontWeight: '600', color: '#1c1c1e', marginBottom: '8px' }}>Sign in with Telegram</p>
-            <p style={{ fontSize: '14px', lineHeight: '1.5' }}>Browse your channels, groups and chats</p>
+          <div style={{ textAlign: 'center', padding: '60px 24px' }}>
+            <p style={{ fontSize: '17px', fontWeight: '600', color: '#1c1c1e', margin: '0 0 8px' }}>
+              Sign in with Telegram
+            </p>
+            <p style={{ fontSize: '14px', color: '#8e8e93', lineHeight: '1.5', margin: 0 }}>
+              Browse your channels, groups and chats
+            </p>
           </div>
         ) : loading && visible.length === 0 ? (
-          // Skeleton — always 3 columns
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
             {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} style={{ background: 'white', borderRadius: '16px', padding: '12px 8px 10px', boxShadow: '0 1px 5px rgba(0,0,0,0.06)' }}>
-                <div style={{ width: '100%', aspectRatio: '1', borderRadius: '14px', background: '#e5e5ea', marginBottom: '8px' }} />
-                <div style={{ height: '10px', background: '#e5e5ea', borderRadius: '5px', marginBottom: '6px' }} />
-                <div style={{ height: '14px', background: '#e5e5ea', borderRadius: '7px', width: '50%', margin: '0 auto' }} />
+              <div key={i} style={{ background: 'white', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: '100%', paddingTop: '100%', background: '#e5e5ea' }} />
+                <div style={{ padding: '8px 8px 10px' }}>
+                  <div style={{ height: '10px', background: '#e5e5ea', borderRadius: '5px', marginBottom: '6px' }} />
+                  <div style={{ height: '14px', background: '#e5e5ea', borderRadius: '7px', width: '55%', margin: '0 auto' }} />
+                </div>
               </div>
             ))}
           </div>
         ) : visible.length === 0 ? (
-          <p style={{ textAlign: 'center', color: '#8e8e93', padding: '40px', fontWeight: '500' }}>No chats found</p>
+          <p style={{ textAlign: 'center', color: '#8e8e93', padding: '40px', fontWeight: '500' }}>
+            No chats found
+          </p>
         ) : (
-          <ChatGrid chats={visible} onSelect={setActiveChat} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+            {visible.map(chat => (
+              <ChatCard key={chat.id} chat={chat} onClick={() => setActiveChat(chat)} />
+            ))}
+          </div>
         )}
       </div>
 
