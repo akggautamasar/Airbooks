@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { User, LogOut, Shield, Info, ChevronRight } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import { api } from '../../utils/api';
@@ -11,7 +11,25 @@ export default function SettingsScreen() {
     actions.logout();
   }
 
-  return (
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showInstall, setShowInstall] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setInstallPrompt(e); setShowInstall(true); };
+    window.addEventListener('beforeinstallprompt', handler);
+    // Also check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) setShowInstall(false);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  async function installApp() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') setShowInstall(false);
+  }
+
+    return (
     <div style={{ flex: 1, overflowY: 'auto', background: '#f2f2f7' }}>
       <div style={{ padding: '52px 16px 16px' }}>
         <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#1c1c1e', margin: '0 0 20px' }}>Settings</h1>
