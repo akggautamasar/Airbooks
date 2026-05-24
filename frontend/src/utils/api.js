@@ -45,12 +45,26 @@ export const api = {
   getDiscoverChannels:  () => req('/discover/channels'),
   triggerDiscoverRefresh: () => req('/discover/refresh', { method: 'POST' }),
 
-  async getChannelFiles(id, type) {
-    const cached = FILE_CACHE.get(`d_${id}`, type);
-    if (cached) return { files: cached };
-    const res = await req(`/discover/channels/${id}/files${type ? '?type=' + type : ''}`);
-    if (res.files) FILE_CACHE.set(`d_${id}`, type, res.files);
-    return res;
+  async getChannelFiles(id, type, forceRefresh = false) {
+    const cacheKey = `d_${id}`;
+    if (!forceRefresh) {
+      const cached = FILE_CACHE.get(cacheKey, type);
+      if (cached) return { files: cached };
+    }
+    // Try discover endpoint first, fall back to chats endpoint for numeric IDs
+    const params = new URLSearchParams();
+    if (type) params.set('type', type);
+    if (forceRefresh) params.set('refresh', 'true');
+    try {
+      const res = await req(`/discover/channels/${id}/files?${params}`);
+      if (res.files) FILE_CACHE.set(cacheKey, type, res.files);
+      return res;
+    } catch {
+      // Fallback: use chats endpoint directly
+      const res = await req(`/chats/${id}/files?${params}`);
+      if (res.files) FILE_CACHE.set(cacheKey, type, res.files);
+      return res;
+    }
   },
 
   // User chats
