@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { Play, Star, ChevronRight, RefreshCw, Film, Tv, Search, X, ArrowLeft, Bookmark } from 'lucide-react';
+import { Play, Star, ChevronRight, RefreshCw, Film, Tv, Search, X, ArrowLeft, Bookmark, BookmarkCheck } from 'lucide-react';
 import { api } from '../../utils/api';
 import { groupMovies } from '../../utils/movieParser';
 import { searchTMDB, posterUrl, backdropUrl, getRating, getOverview, MOVIE_GENRES, TV_GENRES } from '../../utils/tmdb';
+import { useApp } from '../../store/AppContext';
 
 const AIR_MOVIES_ID = '-1003930241514';
 const TMDB_CACHE_KEY = 'airbooks_tmdb_cache_v1';
+const BOOKMARKS_KEY  = 'airbooks_bookmarks_v1';
 
 const GRADS = [
   ['#1a1a2e','#e94560'],['#0f3460','#533483'],['#1b262c','#0f4c75'],
@@ -18,12 +20,17 @@ function grad(id) {
   return GRADS[n % GRADS.length];
 }
 
-// Load/save TMDB cache in localStorage
 function loadTMDBCache() {
   try { return JSON.parse(localStorage.getItem(TMDB_CACHE_KEY) || '{}'); } catch { return {}; }
 }
 function saveTMDBCache(c) {
   try { localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(c)); } catch {}
+}
+function loadBookmarks() {
+  try { return JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '[]'); } catch { return []; }
+}
+function saveBookmarks(b) {
+  try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(b)); } catch {}
 }
 
 async function enrich(group, tmdbCache) {
@@ -45,6 +52,182 @@ async function enrich(group, tmdbCache) {
     overview: getOverview(data),
     genres,
   };
+}
+
+// ── Initials avatar ────────────────────────────────────────────────────────
+function UserPill({ user }) {
+  const name = user?.name || 'Guest';
+  const initials = name.trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase() || '?';
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:'8px',
+      background:'rgba(255,255,255,0.18)', backdropFilter:'blur(12px)',
+      borderRadius:'24px', padding:'5px 14px 5px 6px',
+      border:'1px solid rgba(255,255,255,0.22)',
+    }}>
+      <div style={{
+        width:'28px', height:'28px', borderRadius:'50%',
+        background:'#3478f6', display:'flex', alignItems:'center',
+        justifyContent:'center', flexShrink:0,
+      }}>
+        <span style={{color:'white', fontWeight:'800', fontSize:'11px'}}>{initials}</span>
+      </div>
+      <span style={{color:'white', fontWeight:'600', fontSize:'13px', maxWidth:'120px',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+        {name}
+      </span>
+    </div>
+  );
+}
+
+// ── Hero (Telefin-style, full-bleed, crossfade) ────────────────────────────
+function Hero({ movies, onPlay, onSearch, onBookmark, user }) {
+  const [idx, setIdx]     = useState(0);
+  const [prevIdx, setPrev] = useState(null);
+  const [fading, setFading] = useState(false);
+  const timerRef = useRef(null);
+
+  const advance = useCallback((next) => {
+    setPrev(idx);
+    setFading(true);
+    setTimeout(() => {
+      setIdx(next);
+      setPrev(null);
+      setFading(false);
+    }, 500);
+  }, [idx]);
+
+  useEffect(() => {
+    if (movies.length < 2) return;
+    timerRef.current = setInterval(() => {
+      setIdx(i => {
+        const next = (i + 1) % movies.length;
+        setPrev(i);
+        setFading(true);
+        setTimeout(() => { setIdx(next); setPrev(null); setFading(false); }, 500);
+        return i; // hold current until fade done
+      });
+    }, 5000);
+    return () => clearInterval(timerRef.current);
+  }, [movies.length]);
+
+  if (!movies.length) return null;
+
+  const m    = movies[idx];
+  const prev = prevIdx !== null ? movies[prevIdx] : null;
+  const [g1,g2] = grad(m.id);
+
+  return (
+    <div style={{ position:'relative', width:'100%', height:'58vh', minHeight:'320px', overflow:'hidden', flexShrink:0 }}>
+
+      {/* Prev backdrop (fading out) */}
+      {prev && (
+        <div style={{
+          position:'absolute', inset:0, zIndex:1,
+          opacity: fading ? 0 : 1,
+          transition:'opacity 0.5s ease',
+        }}>
+          {prev.backdrop
+            ? <img src={prev.backdrop} alt="" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+            : <div style={{width:'100%',height:'100%',background:`linear-gradient(135deg,${grad(prev.id)[0]},${grad(prev.id)[1]})`}}/>
+          }
+        </div>
+      )}
+
+      {/* Current backdrop */}
+      <div style={{
+        position:'absolute', inset:0, zIndex:2,
+        opacity: fading ? 0 : 1,
+        transition:'opacity 0.5s ease',
+      }}>
+        {m.backdrop
+          ? <img src={m.backdrop} alt={m.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+          : <div style={{width:'100%',height:'100%',background:`linear-gradient(135deg,${g1},${g2})`}}/>
+        }
+      </div>
+
+      {/* Gradient overlays */}
+      <div style={{
+        position:'absolute', inset:0, zIndex:3,
+        background:'linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0) 35%, rgba(0,0,0,0.05) 55%, rgba(0,0,0,0.82) 100%)',
+      }}/>
+
+      {/* Top bar */}
+      <div style={{
+        position:'absolute', top:0, left:0, right:0, zIndex:10,
+        padding:'48px 16px 0',
+        display:'flex', alignItems:'center', justifyContent:'space-between',
+      }}>
+        <UserPill user={user}/>
+        <div style={{display:'flex', gap:'8px'}}>
+          <button onClick={onSearch} style={{
+            width:'38px', height:'38px', borderRadius:'12px',
+            background:'rgba(255,255,255,0.18)', backdropFilter:'blur(10px)',
+            border:'1px solid rgba(255,255,255,0.2)',
+            cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <Search size={17} color="white"/>
+          </button>
+          <button onClick={onBookmark} style={{
+            width:'38px', height:'38px', borderRadius:'12px',
+            background:'rgba(255,255,255,0.18)', backdropFilter:'blur(10px)',
+            border:'1px solid rgba(255,255,255,0.2)',
+            cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <Bookmark size={17} color="white"/>
+          </button>
+        </div>
+      </div>
+
+      {/* Bottom content */}
+      <div style={{
+        position:'absolute', bottom:0, left:0, right:0, zIndex:10,
+        padding:'0 20px 22px',
+        display:'flex', flexDirection:'column', alignItems:'center',
+      }}>
+        {/* Title */}
+        <h2 style={{
+          color:'white', fontWeight:'900', fontSize:'clamp(22px,6vw,32px)',
+          margin:'0 0 16px', textAlign:'center', lineHeight:'1.15',
+          textShadow:'0 2px 16px rgba(0,0,0,0.6)',
+          letterSpacing:'-0.5px',
+          textTransform: m.title === m.title.toUpperCase() ? 'none' : 'none',
+          maxWidth:'90%',
+          overflow:'hidden', display:'-webkit-box',
+          WebkitLineClamp:2, WebkitBoxOrient:'vertical',
+        }}>
+          {m.title}
+        </h2>
+
+        {/* Watch button */}
+        <button onClick={() => onPlay(m)} style={{
+          display:'inline-flex', alignItems:'center', gap:'9px',
+          background:'rgba(18,18,24,0.82)', backdropFilter:'blur(10px)',
+          color:'white', border:'1.5px solid rgba(255,255,255,0.15)',
+          borderRadius:'30px', padding:'11px 28px',
+          fontWeight:'700', fontSize:'15px', cursor:'pointer',
+          boxShadow:'0 4px 20px rgba(0,0,0,0.35)',
+          letterSpacing:'0.2px',
+        }}>
+          <Play size={15} fill="white" strokeWidth={0}/> Watch
+        </button>
+
+        {/* Dot indicators */}
+        {movies.length > 1 && (
+          <div style={{display:'flex', gap:'6px', marginTop:'16px'}}>
+            {movies.slice(0,8).map((_,i) => (
+              <div key={i} onClick={() => advance((i))} style={{
+                width: i===idx ? '20px' : '6px',
+                height:'6px', borderRadius:'3px',
+                background: i===idx ? 'white' : 'rgba(255,255,255,0.35)',
+                cursor:'pointer', transition:'all 0.35s ease',
+              }}/>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Poster card ────────────────────────────────────────────────────────────
@@ -108,8 +291,7 @@ function PosterCard({ movie, onTap, style = {} }) {
   );
 }
 
-
-// ── Grid card (uniform 3-column, no hooks in map) ─────────────────────────
+// ── Grid card ─────────────────────────────────────────────────────────────
 function GridCard({ movie, onTap }) {
   const [failed, setFailed] = useState(false);
   const [g1,g2] = grad(movie.id);
@@ -159,7 +341,7 @@ function GridCard({ movie, onTap }) {
   );
 }
 
-// ── Landscape card (big, like Telefin featured cards) ─────────────────────
+// ── Landscape card ─────────────────────────────────────────────────────────
 function LandscapeCard({ movie, onTap }) {
   const [failed, setFailed] = useState(false);
   const [g1,g2] = grad(movie.id);
@@ -187,26 +369,20 @@ function LandscapeCard({ movie, onTap }) {
                 <Film size={36} color="rgba(255,255,255,0.4)"/>
               </div>
         }
-        {/* Gradient overlay */}
         <div style={{position:'absolute',inset:0,
           background:'linear-gradient(to bottom,rgba(0,0,0,0) 30%,rgba(0,0,0,0.85) 100%)'}}/>
-        {/* Badges */}
-        <div style={{position:'absolute',top:'8px',left:'8px',
-          display:'flex',gap:'5px',alignItems:'center'}}>
+        <div style={{position:'absolute',top:'8px',left:'8px',display:'flex',gap:'5px',alignItems:'center'}}>
           <span style={{background:'rgba(0,0,0,0.65)',backdropFilter:'blur(4px)',
-            color:'white',fontSize:'9px',fontWeight:'700',
-            padding:'2px 7px',borderRadius:'5px'}}>
+            color:'white',fontSize:'9px',fontWeight:'700',padding:'2px 7px',borderRadius:'5px'}}>
             {movie.isSeries?'TV':'MOVIE'}
           </span>
           {movie.rating && (
             <span style={{background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
-              padding:'2px 7px',borderRadius:'5px',
-              display:'flex',alignItems:'center',gap:'2px'}}>
+              padding:'2px 7px',borderRadius:'5px',display:'flex',alignItems:'center',gap:'2px'}}>
               <Star size={8} fill="white" strokeWidth={0}/> {movie.rating}
             </span>
           )}
         </div>
-        {/* Title overlay */}
         <div style={{position:'absolute',bottom:0,left:0,right:0,padding:'10px 10px 8px'}}>
           <p style={{color:'white',fontWeight:'800',fontSize:'14px',margin:'0 0 2px',
                      lineHeight:'1.2',textShadow:'0 1px 4px rgba(0,0,0,0.5)',
@@ -218,7 +394,6 @@ function LandscapeCard({ movie, onTap }) {
             {movie.year}{movie.genres?.length?' · '+movie.genres[0]:''}
           </p>
         </div>
-        {/* Quality badges */}
         {movie.qualities?.length>0 && (
           <div style={{position:'absolute',bottom:'8px',right:'8px',display:'flex',gap:'3px'}}>
             {movie.qualities.slice(0,1).map(q=>(
@@ -232,7 +407,7 @@ function LandscapeCard({ movie, onTap }) {
   );
 }
 
-// ── Landscape Row (big cards) ──────────────────────────────────────────────
+// ── Landscape Row ──────────────────────────────────────────────────────────
 function LandscapeRow({ icon, title, movies, onTap, onViewAll }) {
   if(!movies.length) return null;
   return (
@@ -256,71 +431,6 @@ function LandscapeRow({ icon, title, movies, onTap, onViewAll }) {
                    padding:'2px 16px 8px',scrollbarWidth:'none'}}>
         {movies.slice(0,15).map(m=><LandscapeCard key={m.id} movie={m} onTap={onTap}/>)}
       </div>
-    </div>
-  );
-}
-
-// ── Hero ───────────────────────────────────────────────────────────────────
-function Hero({ movies, onPlay }) {
-  const [idx,setIdx] = useState(0);
-  useEffect(()=>{
-    if(movies.length<2) return;
-    const t = setInterval(()=>setIdx(i=>(i+1)%movies.length),5000);
-    return ()=>clearInterval(t);
-  },[movies.length]);
-  if(!movies.length) return null;
-  const m = movies[idx];
-  const [g1,g2] = grad(m.id);
-  return (
-    <div style={{position:'relative',width:'100%',height:'300px',overflow:'hidden'}}>
-      {m.backdrop
-        ? <img src={m.backdrop} alt={m.title}
-            style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
-        : <div style={{width:'100%',height:'100%',
-                       background:`linear-gradient(135deg,${g1},${g2})`}}/>
-      }
-      <div style={{position:'absolute',inset:0,
-        background:'linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.8) 100%)'}}/>
-      <div style={{position:'absolute',bottom:0,left:0,right:0,padding:'16px'}}>
-        <div style={{display:'flex',gap:'6px',marginBottom:'6px'}}>
-          <span style={{background:'rgba(255,255,255,0.2)',backdropFilter:'blur(6px)',
-            color:'white',fontSize:'10px',fontWeight:'700',padding:'2px 8px',borderRadius:'5px'}}>
-            {m.isSeries?'SERIES':'MOVIE'}
-          </span>
-          {m.rating && (
-            <span style={{background:'#e91e8c',color:'white',fontSize:'10px',fontWeight:'700',
-              padding:'2px 8px',borderRadius:'5px',display:'flex',alignItems:'center',gap:'3px'}}>
-              <Star size={9} fill="white" strokeWidth={0}/> {m.rating}
-            </span>
-          )}
-        </div>
-        <h2 style={{color:'white',fontWeight:'800',fontSize:'22px',margin:'0 0 4px',
-                    textShadow:'0 2px 10px rgba(0,0,0,0.5)',lineHeight:'1.2'}}>
-          {m.title}
-        </h2>
-        {m.year && <p style={{color:'rgba(255,255,255,0.7)',fontSize:'12px',margin:'0 0 4px'}}>
-          {m.year}{m.genres?.length?' · '+m.genres.join(' · '):''}
-        </p>}
-        <button onClick={()=>onPlay(m)} style={{
-          display:'inline-flex',alignItems:'center',gap:'8px',
-          background:'rgba(20,20,20,0.85)',backdropFilter:'blur(8px)',
-          color:'white',border:'none',borderRadius:'24px',
-          padding:'10px 22px',fontWeight:'700',fontSize:'14px',cursor:'pointer',
-        }}>
-          <Play size={15} fill="white" strokeWidth={0}/> Watch
-        </button>
-      </div>
-      {movies.length>1 && (
-        <div style={{position:'absolute',bottom:'12px',right:'16px',display:'flex',gap:'5px'}}>
-          {movies.slice(0,6).map((_,i)=>(
-            <div key={i} onClick={()=>setIdx(i)} style={{
-              width:i===idx?'18px':'6px',height:'6px',borderRadius:'3px',
-              background:i===idx?'white':'rgba(255,255,255,0.4)',
-              cursor:'pointer',transition:'width 0.3s',
-            }}/>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -353,27 +463,25 @@ function Row({ icon, title, movies, onTap, onViewAll }) {
   );
 }
 
-// ── Movie detail page (like Telefin) ───────────────────────────────────────
-function MovieDetail({ movie, onBack, onPlay }) {
+// ── Movie detail ───────────────────────────────────────────────────────────
+function MovieDetail({ movie, onBack, onPlay, bookmarks, onToggleBookmark }) {
   const [g1,g2] = grad(movie.id);
   const [imgFailed, setImgFailed] = useState(false);
   const sorted = [...(movie.versions||[])].sort((a,b)=>b.qualityRank-a.qualityRank);
+  const isBookmarked = bookmarks.some(b=>b.id===movie.id);
 
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',background:'#f2f2f7',overflow:'hidden'}}>
       <div style={{flex:1,overflowY:'auto'}}>
-        {/* Backdrop */}
         <div style={{position:'relative',width:'100%',height:'260px',overflow:'hidden'}}>
           {movie.backdrop && !imgFailed
             ? <img src={movie.backdrop} alt={movie.title}
                 style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}
                 onError={()=>setImgFailed(true)}/>
-            : <div style={{width:'100%',height:'100%',
-                           background:`linear-gradient(135deg,${g1},${g2})`}}/>
+            : <div style={{width:'100%',height:'100%',background:`linear-gradient(135deg,${g1},${g2})`}}/>
           }
           <div style={{position:'absolute',inset:0,
             background:'linear-gradient(to bottom,rgba(0,0,0,0.1),rgba(0,0,0,0.6))'}}/>
-          {/* Top nav */}
           <div style={{position:'absolute',top:0,left:0,right:0,
             display:'flex',alignItems:'center',justifyContent:'space-between',
             padding:'48px 16px 0'}}>
@@ -383,20 +491,22 @@ function MovieDetail({ movie, onBack, onPlay }) {
               border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <ArrowLeft size={18} color="white"/>
             </button>
-            <button style={{
+            <button onClick={()=>onToggleBookmark(movie)} style={{
               width:'36px',height:'36px',borderRadius:'50%',
-              background:'rgba(0,0,0,0.4)',backdropFilter:'blur(6px)',
+              background: isBookmarked ? '#3478f6' : 'rgba(0,0,0,0.4)',
+              backdropFilter:'blur(6px)',
               border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <Bookmark size={16} color="white"/>
+              {isBookmarked
+                ? <BookmarkCheck size={16} color="white"/>
+                : <Bookmark size={16} color="white"/>
+              }
             </button>
           </div>
         </div>
 
-        {/* Info card */}
         <div style={{margin:'16px',background:'white',borderRadius:'20px',
                      padding:'16px',boxShadow:'0 2px 12px rgba(0,0,0,0.08)'}}>
           <div style={{display:'flex',gap:'14px',marginBottom:'14px'}}>
-            {/* Poster */}
             <div style={{width:'80px',height:'120px',borderRadius:'12px',overflow:'hidden',
                          flexShrink:0,background:`linear-gradient(135deg,${g1},${g2})`,
                          display:'flex',alignItems:'center',justifyContent:'center',
@@ -435,9 +545,7 @@ function MovieDetail({ movie, onBack, onPlay }) {
               </div>
             </div>
           </div>
-          {/* Divider */}
           <div style={{height:'1px',background:'#f2f2f7',margin:'0 0 14px'}}/>
-          {/* Overview */}
           {movie.overview && (
             <p style={{fontSize:'14px',color:'#3c3c43',lineHeight:'1.6',margin:0}}>
               {movie.overview}
@@ -445,7 +553,6 @@ function MovieDetail({ movie, onBack, onPlay }) {
           )}
         </div>
 
-        {/* Quality options */}
         <div style={{margin:'0 16px 100px'}}>
           <p style={{fontWeight:'700',fontSize:'13px',color:'#8e8e93',
                      margin:'0 0 10px',letterSpacing:'0.5px'}}>
@@ -489,7 +596,6 @@ function MovieDetail({ movie, onBack, onPlay }) {
         </div>
       </div>
 
-      {/* Play button */}
       <div style={{position:'absolute',bottom:0,left:0,right:0,
         padding:'12px 16px calc(env(safe-area-inset-bottom,0px)+12px)',
         background:'white',borderTop:'1px solid #f2f2f7'}}>
@@ -531,43 +637,39 @@ function GridView({ title, movies, onBack, onTap }) {
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'8px 16px 100px'}}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
-          {filtered.map(m=>{
-            const [g1,g2] = grad(m.id);
-            const [failed,setFailed] = useState(false);
-            return (
-              <button key={m.id} onClick={()=>onTap(m)} style={{
-                background:'none',border:'none',cursor:'pointer',padding:0,textAlign:'left'}}>
-                <div style={{width:'100%',paddingTop:'150%',position:'relative',
-                             borderRadius:'12px',overflow:'hidden',
-                             background:`linear-gradient(135deg,${g1},${g2})`,
-                             marginBottom:'6px',boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
-                  {m.poster && !failed
-                    ? <img src={m.poster} alt={m.title}
-                        style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
-                        onError={()=>setFailed(true)}/>
-                    : <div style={{position:'absolute',inset:0,display:'flex',
-                                   alignItems:'center',justifyContent:'center'}}>
-                        <Film size={22} color="rgba(255,255,255,0.5)"/>
-                      </div>
-                  }
-                  {m.rating && (
-                    <div style={{position:'absolute',top:'5px',right:'5px',
-                      background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
-                      padding:'2px 5px',borderRadius:'4px',
-                      display:'flex',alignItems:'center',gap:'2px'}}>
-                      <Star size={7} fill="white" strokeWidth={0}/> {m.rating}
-                    </div>
-                  )}
-                </div>
-                <p style={{fontSize:'11px',fontWeight:'600',color:'#1c1c1e',margin:'0 0 1px',
-                           overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {m.title}
-                </p>
-                <p style={{fontSize:'10px',color:'#8e8e93',margin:0}}>{m.year}</p>
-              </button>
-            );
-          })}
+          {filtered.map(m=><GridCard key={m.id} movie={m} onTap={onTap}/>)}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Bookmarks view ─────────────────────────────────────────────────────────
+function BookmarksView({ bookmarks, onBack, onTap, onRemove }) {
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',background:'#f2f2f7',overflow:'hidden'}}>
+      <div style={{padding:'50px 16px 10px',background:'#f2f2f7',flexShrink:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}}>
+          <button onClick={onBack} style={{width:'36px',height:'36px',borderRadius:'10px',
+            background:'white',border:'none',cursor:'pointer',display:'flex',
+            alignItems:'center',justifyContent:'center',boxShadow:'0 1px 3px rgba(0,0,0,0.1)',flexShrink:0}}>
+            <ArrowLeft size={18} color="#3478f6"/>
+          </button>
+          <h2 style={{fontSize:'18px',fontWeight:'700',color:'#1c1c1e',margin:0,flex:1}}>Bookmarks</h2>
+          <span style={{fontSize:'13px',color:'#8e8e93'}}>{bookmarks.length}</span>
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'8px 16px 100px'}}>
+        {bookmarks.length === 0
+          ? <div style={{textAlign:'center',padding:'60px 20px'}}>
+              <Bookmark size={40} color="#c7c7cc" style={{marginBottom:'12px'}}/>
+              <p style={{color:'#8e8e93',fontSize:'15px',fontWeight:'500',margin:0}}>No bookmarks yet</p>
+              <p style={{color:'#c7c7cc',fontSize:'13px',margin:'6px 0 0'}}>Tap the bookmark icon on any title to save it</p>
+            </div>
+          : <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+              {bookmarks.map(m=><GridCard key={m.id} movie={m} onTap={onTap}/>)}
+            </div>
+        }
       </div>
     </div>
   );
@@ -575,13 +677,25 @@ function GridView({ title, movies, onBack, onTap }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 export default function DiscoverScreen() {
+  const { state } = useApp();
   const [all, setAll]             = useState([]);
   const [loading, setLoading]     = useState(true);
   const [detailMovie, setDetail]  = useState(null);
   const [viewAll, setViewAll]     = useState(null);
   const [search, setSearch]       = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [bookmarks, setBookmarks] = useState(loadBookmarks);
   const tmdbCache = useRef(loadTMDBCache());
+
+  function toggleBookmark(movie) {
+    setBookmarks(prev => {
+      const exists = prev.some(b=>b.id===movie.id);
+      const next = exists ? prev.filter(b=>b.id!==movie.id) : [movie,...prev];
+      saveBookmarks(next);
+      return next;
+    });
+  }
 
   function playFile(file) {
     const backendBase = (import.meta.env.VITE_API_URL||'').replace(/\/api$/,'');
@@ -619,7 +733,8 @@ export default function DiscoverScreen() {
   const series   = useMemo(()=>all.filter(m=>m.isSeries),[all]);
   const recent   = useMemo(()=>[...all].sort((a,b)=>b.date-a.date).slice(0,20),[all]);
   const topRated = useMemo(()=>[...all].filter(m=>m.rating).sort((a,b)=>parseFloat(b.rating)-parseFloat(a.rating)).slice(0,20),[all]);
-  const heroList = useMemo(()=>recent.filter(m=>m.backdrop).slice(0,6),[recent]);
+  // Hero: top-rated with backdrops, cycling through them
+  const heroList = useMemo(()=>topRated.filter(m=>m.backdrop).slice(0,8),[topRated]);
 
   const searchResults = useMemo(()=>{
     if(!search.trim()) return [];
@@ -631,13 +746,14 @@ export default function DiscoverScreen() {
     );
   },[all,search]);
 
-  // Navigate detail → play
   if (detailMovie) {
     return (
       <MovieDetail
         movie={detailMovie}
         onBack={()=>setDetail(null)}
         onPlay={file=>{ playFile(file); }}
+        bookmarks={bookmarks}
+        onToggleBookmark={toggleBookmark}
       />
     );
   }
@@ -647,16 +763,21 @@ export default function DiscoverScreen() {
                      onBack={()=>setViewAll(null)} onTap={setDetail}/>;
   }
 
+  if (showBookmarks) {
+    return <BookmarksView bookmarks={bookmarks} onBack={()=>setShowBookmarks(false)}
+                          onTap={setDetail} onRemove={toggleBookmark}/>;
+  }
+
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',background:'#f2f2f7',overflow:'hidden'}}>
 
-      {/* Header — overlaid on hero */}
-      <div style={{
-        position:'absolute',top:0,left:0,right:0,zIndex:20,
-        padding:'48px 16px 10px',
-        background: showSearch ? '#f2f2f7' : 'linear-gradient(to bottom,rgba(0,0,0,0.35),transparent)',
-      }}>
-        {showSearch ? (
+      {/* Search overlay header (only when searching) */}
+      {showSearch && (
+        <div style={{
+          position:'absolute',top:0,left:0,right:0,zIndex:30,
+          padding:'48px 16px 10px',
+          background:'#f2f2f7',
+        }}>
           <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
             <div style={{position:'relative',flex:1}}>
               <Search size={14} color="#8e8e93" style={{position:'absolute',left:'12px',top:'50%',transform:'translateY(-50%)'}}/>
@@ -677,28 +798,8 @@ export default function DiscoverScreen() {
               Cancel
             </button>
           </div>
-        ) : (
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:'24px',fontWeight:'800',color:'white',
-                          textShadow:'0 1px 6px rgba(0,0,0,0.4)'}}>Discover</span>
-            <div style={{display:'flex',gap:'8px'}}>
-              <button onClick={()=>setShowSearch(true)} style={{
-                width:'36px',height:'36px',borderRadius:'10px',
-                background:'rgba(255,255,255,0.2)',backdropFilter:'blur(8px)',
-                border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                <Search size={16} color="white"/>
-              </button>
-              <button onClick={()=>load(true)} style={{
-                width:'36px',height:'36px',borderRadius:'10px',
-                background:'rgba(255,255,255,0.2)',backdropFilter:'blur(8px)',
-                border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                <RefreshCw size={15} color="white"
-                  style={{animation:loading?'spin 1s linear infinite':'none'}}/>
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',paddingBottom:'100px'}}>
         {showSearch && search ? (
@@ -719,11 +820,25 @@ export default function DiscoverScreen() {
           </div>
         ) : (
           <>
-            {/* Hero — no top padding, full width */}
-            {heroList.length>0
-              ? <Hero movies={heroList} onPlay={setDetail}/>
-              : loading&&all.length===0
-                ? <div style={{width:'100%',height:'300px',background:'linear-gradient(135deg,#1a1a2e,#0f3460)'}}/>
+            {/* Full-bleed Telefin-style Hero */}
+            {heroList.length > 0
+              ? <Hero
+                  movies={heroList}
+                  onPlay={setDetail}
+                  onSearch={()=>setShowSearch(true)}
+                  onBookmark={()=>setShowBookmarks(true)}
+                  user={state.user}
+                />
+              : loading && all.length===0
+                ? <div style={{
+                    width:'100%', height:'58vh', minHeight:'320px',
+                    background:'linear-gradient(135deg,#1a1a2e,#0f3460)',
+                    display:'flex', alignItems:'flex-end', padding:'20px',
+                    boxSizing:'border-box',
+                  }}>
+                    {/* Skeleton shimmer */}
+                    <div style={{width:'60%',height:'28px',background:'rgba(255,255,255,0.1)',borderRadius:'8px'}}/>
+                  </div>
                 : <div style={{height:'88px'}}/>
             }
 
@@ -764,6 +879,21 @@ export default function DiscoverScreen() {
           </>
         )}
       </div>
+
+      {/* Refresh button (floating, only on main view) */}
+      {!showSearch && (
+        <button onClick={()=>load(true)} style={{
+          position:'absolute', bottom:'80px', right:'16px', zIndex:20,
+          width:'40px', height:'40px', borderRadius:'12px',
+          background:'white', border:'none', cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 2px 12px rgba(0,0,0,0.15)',
+        }}>
+          <RefreshCw size={16} color="#3478f6"
+            style={{animation:loading?'spin 1s linear infinite':'none'}}/>
+        </button>
+      )}
+
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
