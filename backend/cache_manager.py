@@ -63,11 +63,16 @@ async def save_cache(client: Client, chat_id: int | str, files: list, channel_na
     fname = _filename(chat_id_str)
 
     # Build cache data
+    # Calculate newest msg_id for incremental scanning
+    all_msg_ids = [f.get("msg_id", 0) for f in files if f.get("msg_id")]
+    newest_msg_id = max(all_msg_ids) if all_msg_ids else 0
+
     cache_data = {
         "chat_id": chat_id_str,
         "channel_name": channel_name,
         "scanned_at": datetime.utcnow().isoformat(),
         "file_count": len(files),
+        "newest_msg_id": newest_msg_id,
         "files": files,
     }
 

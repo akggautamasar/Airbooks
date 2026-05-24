@@ -438,25 +438,43 @@ async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
         return {"files": filtered, "from_cache": True,
                 "scanned_at": file_cache[chat_id_str].get("scanned_at")}
 
-    # Scan all messages
-    files = []
+    # Incremental scan — only scan messages newer than what's already cached
+    existing_files = []
+    newest_msg_id = 0
+    if chat_id_str in file_cache and not refresh:
+        existing_files = file_cache[chat_id_str].get("files", [])
+        newest_msg_id = file_cache[chat_id_str].get("newest_msg_id", 0)
+    elif chat_id_str in file_cache and refresh:
+        # On explicit refresh, keep existing files but rescan for new ones
+        existing_files = file_cache[chat_id_str].get("files", [])
+        newest_msg_id = file_cache[chat_id_str].get("newest_msg_id", 0)
+
+    # Build set of existing msg_ids to avoid duplicates
+    existing_ids = {f["msg_id"] for f in existing_files}
+
+    new_files = []
     try:
         async for msg in client.get_chat_history(chat_id):
+            # Stop when we reach messages we already have
+            if msg.id <= newest_msg_id and newest_msg_id > 0:
+                break
             media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
             if not media:
-                if msg.photo:
-                    files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+                if msg.photo and msg.id not in existing_ids:
+                    new_files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
                                   "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
                                   "type": "image", "mime": "image/jpeg", "size": 0,
                                   "date": msg.date.timestamp() if msg.date else 0,
                                   "caption": msg.caption or "",
                                   "has_thumb": True})
                 continue
+            if msg.id in existing_ids:
+                continue
             mime  = getattr(media,"mime_type","") or ""
             fname = getattr(media,"file_name","") or f"file_{msg.id}"
             ftype = media_type(mime, fname)
             if ftype == "other": continue
-            files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+            new_files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
                           "channel_id": chat_id, "name": fname, "type": ftype, "mime": mime,
                           "size": getattr(media,"file_size",0),
                           "date": msg.date.timestamp() if msg.date else 0,
@@ -464,6 +482,12 @@ async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
                           "duration": getattr(media,"duration",None),
                           "has_thumb": bool(getattr(media,"thumbs",None))})
     except Exception as e: raise HTTPException(500, str(e))
+
+    # Merge new files with existing (new files are newer, go first)
+    files = new_files + existing_files
+    # Track the newest msg_id seen
+    all_msg_ids = [f["msg_id"] for f in files]
+    new_newest = max(all_msg_ids) if all_msg_ids else 0
 
     # Try to get channel name
     try:
@@ -478,6 +502,7 @@ async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
             "files": files,
             "scanned_at": datetime.utcnow().isoformat(),
             "channel_name": channel_name,
+            "newest_msg_id": new_newest,
             "file_count": len(files),
         }
 
