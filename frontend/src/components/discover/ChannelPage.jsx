@@ -159,6 +159,58 @@ function DocCard({ file, source, tab, onClick }) {
   const Icon = t?.icon || FileText;
   const color = t?.color || '#8e8e93';
   const size = fmtSize(file.size);
+
+  // PDFs shown as grid cards with thumbnail
+  if (tab === 'pdf' || tab === 'epub') {
+    const thumbUrl = api.thumbUrl(source, file.channel_id, file.msg_id);
+    return (
+      <button onClick={onClick} style={{
+        background:'white', borderRadius:'14px', overflow:'hidden',
+        boxShadow:'0 1px 4px rgba(0,0,0,0.08)', cursor:'pointer',
+        border:'none', padding:0, textAlign:'left', width:'100%',
+      }}>
+        {/* Cover area */}
+        <div style={{ aspectRatio:'3/4', position:'relative', background: color+'18',
+                      display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <LazyThumb src={thumbUrl} alt={file.name}
+            style={{ width:'100%', height:'100%' }}
+            fallback={
+              <div style={{ width:'100%', height:'100%', display:'flex', flexDirection:'column',
+                            alignItems:'center', justifyContent:'center', gap:'8px', padding:'12px',
+                            background:`linear-gradient(135deg,${color}18,${color}30)` }}>
+                <Icon size={28} color={color}/>
+                <p style={{ fontSize:'10px', fontWeight:'700', color, textAlign:'center',
+                            margin:0, lineHeight:'1.3', overflow:'hidden',
+                            display:'-webkit-box', WebkitLineClamp:4, WebkitBoxOrient:'vertical' }}>
+                  {file.name.replace(/\.[^.]+$/,'')}
+                </p>
+              </div>
+            }/>
+          {/* Size badge */}
+          {size && <span style={{ position:'absolute', bottom:'5px', left:'5px',
+            background:'rgba(0,0,0,0.7)', color:'white',
+            fontSize:'9px', fontWeight:'700', padding:'2px 6px', borderRadius:'4px' }}>
+            {size}
+          </span>}
+          {/* Type badge */}
+          <span style={{ position:'absolute', top:'5px', left:'5px',
+            background: color, color:'white',
+            fontSize:'9px', fontWeight:'700', padding:'2px 6px', borderRadius:'4px' }}>
+            {tab.toUpperCase()}
+          </span>
+        </div>
+        <div style={{ padding:'8px' }}>
+          <p style={{ fontSize:'11px', fontWeight:'600', color:'#1c1c1e', margin:0,
+                      overflow:'hidden', display:'-webkit-box',
+                      WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:'1.3' }}>
+            {file.name.replace(/\.[^.]+$/,'')}
+          </p>
+        </div>
+      </button>
+    );
+  }
+
+  // EPUBs and others — list style
   return (
     <button onClick={onClick}
       style={{ display:'flex', alignItems:'center', gap:'12px', background:'white',
@@ -174,7 +226,6 @@ function DocCard({ file, source, tab, onClick }) {
         </p>
         <div style={{ display:'flex', gap:'6px', marginTop:'3px', alignItems:'center', flexWrap:'wrap' }}>
           {size && <span style={{ fontSize:'11px', color:'#8e8e93', background:'#f2f2f7', padding:'2px 6px', borderRadius:'5px', fontWeight:'600' }}>{size}</span>}
-          {file.caption && <span style={{ fontSize:'11px', color:'#8e8e93', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'150px' }}>{file.caption}</span>}
         </div>
       </div>
       <ExternalLink size={14} color="#c7c7cc" />
@@ -441,6 +492,10 @@ export default function ChannelPage({ channel, source, onBack }) {
             ) : tab === 'image' ? (
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
                 {sorted.map(f => <ImageCard key={f.id} file={f} source={source} onClick={()=>handleFile(f)} />)}
+              </div>
+            ) : tab === 'pdf' ? (
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
+                {sorted.map(f => <DocCard key={f.id} file={f} source={source} tab={tab} onClick={()=>handleFile(f)} />)}
               </div>
             ) : (
               <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>

@@ -108,6 +108,158 @@ function PosterCard({ movie, onTap, style = {} }) {
   );
 }
 
+
+// ── Grid card (uniform 3-column, no hooks in map) ─────────────────────────
+function GridCard({ movie, onTap }) {
+  const [failed, setFailed] = useState(false);
+  const [g1,g2] = grad(movie.id);
+  return (
+    <button onClick={()=>onTap(movie)} style={{
+      background:'none', border:'none', cursor:'pointer', padding:0, textAlign:'left', width:'100%',
+    }}>
+      <div style={{width:'100%', paddingTop:'150%', position:'relative',
+                   borderRadius:'12px', overflow:'hidden',
+                   background:`linear-gradient(135deg,${g1},${g2})`,
+                   marginBottom:'6px', boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
+        {movie.poster && !failed
+          ? <img src={movie.poster} alt={movie.title}
+              style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+              onError={()=>setFailed(true)}/>
+          : <div style={{position:'absolute',inset:0,display:'flex',
+                         alignItems:'center',justifyContent:'center',flexDirection:'column',gap:'4px',padding:'6px'}}>
+              <Film size={20} color="rgba(255,255,255,0.5)"/>
+              <p style={{color:'rgba(255,255,255,0.7)',fontSize:'9px',fontWeight:'600',
+                         textAlign:'center',margin:0,lineHeight:'1.3',
+                         overflow:'hidden',display:'-webkit-box',
+                         WebkitLineClamp:3,WebkitBoxOrient:'vertical'}}>
+                {movie.title}
+              </p>
+            </div>
+        }
+        {movie.rating && (
+          <div style={{position:'absolute',top:'5px',right:'5px',
+            background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
+            padding:'2px 5px',borderRadius:'4px',
+            display:'flex',alignItems:'center',gap:'2px'}}>
+            <Star size={7} fill="white" strokeWidth={0}/> {movie.rating}
+          </div>
+        )}
+        <div style={{position:'absolute',top:'5px',left:'5px',
+          background:'rgba(0,0,0,0.6)',color:'white',fontSize:'8px',fontWeight:'700',
+          padding:'1px 5px',borderRadius:'3px'}}>
+          {movie.isSeries?'TV':'MOVIE'}
+        </div>
+      </div>
+      <p style={{fontSize:'11px',fontWeight:'600',color:'#1c1c1e',margin:'0 0 1px',
+                 overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+        {movie.title}
+      </p>
+      <p style={{fontSize:'10px',color:'#8e8e93',margin:0}}>{movie.year}</p>
+    </button>
+  );
+}
+
+// ── Landscape card (big, like Telefin featured cards) ─────────────────────
+function LandscapeCard({ movie, onTap }) {
+  const [failed, setFailed] = useState(false);
+  const [g1,g2] = grad(movie.id);
+  return (
+    <button onClick={()=>onTap(movie)} style={{
+      flexShrink:0, width:'260px', background:'none',
+      border:'none', cursor:'pointer', padding:0, textAlign:'left',
+    }}>
+      <div style={{
+        width:'260px', height:'155px', borderRadius:'16px', overflow:'hidden',
+        background:`linear-gradient(135deg,${g1},${g2})`, position:'relative',
+        marginBottom:'8px', boxShadow:'0 4px 16px rgba(0,0,0,0.2)',
+      }}>
+        {movie.backdrop && !failed
+          ? <img src={movie.backdrop} alt={movie.title}
+              style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}
+              onError={()=>setFailed(true)}/>
+          : movie.poster && !failed
+            ? <img src={movie.poster} alt={movie.title}
+                style={{width:'100%',height:'100%',objectFit:'cover',display:'block',
+                        filter:'blur(2px) brightness(0.7)',transform:'scale(1.1)'}}
+                onError={()=>setFailed(true)}/>
+            : <div style={{width:'100%',height:'100%',display:'flex',
+                           alignItems:'center',justifyContent:'center'}}>
+                <Film size={36} color="rgba(255,255,255,0.4)"/>
+              </div>
+        }
+        {/* Gradient overlay */}
+        <div style={{position:'absolute',inset:0,
+          background:'linear-gradient(to bottom,rgba(0,0,0,0) 30%,rgba(0,0,0,0.85) 100%)'}}/>
+        {/* Badges */}
+        <div style={{position:'absolute',top:'8px',left:'8px',
+          display:'flex',gap:'5px',alignItems:'center'}}>
+          <span style={{background:'rgba(0,0,0,0.65)',backdropFilter:'blur(4px)',
+            color:'white',fontSize:'9px',fontWeight:'700',
+            padding:'2px 7px',borderRadius:'5px'}}>
+            {movie.isSeries?'TV':'MOVIE'}
+          </span>
+          {movie.rating && (
+            <span style={{background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
+              padding:'2px 7px',borderRadius:'5px',
+              display:'flex',alignItems:'center',gap:'2px'}}>
+              <Star size={8} fill="white" strokeWidth={0}/> {movie.rating}
+            </span>
+          )}
+        </div>
+        {/* Title overlay */}
+        <div style={{position:'absolute',bottom:0,left:0,right:0,padding:'10px 10px 8px'}}>
+          <p style={{color:'white',fontWeight:'800',fontSize:'14px',margin:'0 0 2px',
+                     lineHeight:'1.2',textShadow:'0 1px 4px rgba(0,0,0,0.5)',
+                     overflow:'hidden',display:'-webkit-box',
+                     WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+            {movie.title}
+          </p>
+          <p style={{color:'rgba(255,255,255,0.7)',fontSize:'11px',margin:0}}>
+            {movie.year}{movie.genres?.length?' · '+movie.genres[0]:''}
+          </p>
+        </div>
+        {/* Quality badges */}
+        {movie.qualities?.length>0 && (
+          <div style={{position:'absolute',bottom:'8px',right:'8px',display:'flex',gap:'3px'}}>
+            {movie.qualities.slice(0,1).map(q=>(
+              <span key={q} style={{background:'rgba(0,0,0,0.8)',color:'#4ade80',
+                fontSize:'9px',fontWeight:'700',padding:'2px 6px',borderRadius:'4px'}}>{q}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ── Landscape Row (big cards) ──────────────────────────────────────────────
+function LandscapeRow({ icon, title, movies, onTap, onViewAll }) {
+  if(!movies.length) return null;
+  return (
+    <div style={{marginBottom:'24px'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                   padding:'0 16px',marginBottom:'12px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+          <div style={{width:'34px',height:'34px',borderRadius:'10px',
+            background:'#f2f2f7',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <span style={{fontSize:'16px'}}>{icon}</span>
+          </div>
+          <span style={{fontSize:'17px',fontWeight:'700',color:'#1c1c1e'}}>{title}</span>
+        </div>
+        <button onClick={onViewAll} style={{background:'none',border:'none',cursor:'pointer',
+          display:'flex',alignItems:'center',gap:'2px',
+          fontSize:'13px',fontWeight:'600',color:'#3478f6',padding:'4px 8px'}}>
+          View All <ChevronRight size={14}/>
+        </button>
+      </div>
+      <div style={{display:'flex',gap:'12px',overflowX:'auto',
+                   padding:'2px 16px 8px',scrollbarWidth:'none'}}>
+        {movies.slice(0,15).map(m=><LandscapeCard key={m.id} movie={m} onTap={onTap}/>)}
+      </div>
+    </div>
+  );
+}
+
 // ── Hero ───────────────────────────────────────────────────────────────────
 function Hero({ movies, onPlay }) {
   const [idx,setIdx] = useState(0);
@@ -560,29 +712,7 @@ export default function DiscoverScreen() {
                     {searchResults.length} results
                   </p>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px'}}>
-                    {searchResults.map(m=>{
-                      const [g1,g2]=grad(m.id);
-                      return (
-                        <button key={m.id} onClick={()=>setDetail(m)} style={{
-                          background:'none',border:'none',cursor:'pointer',padding:0,textAlign:'left'}}>
-                          <div style={{width:'100%',paddingTop:'150%',position:'relative',
-                            borderRadius:'12px',overflow:'hidden',
-                            background:`linear-gradient(135deg,${g1},${g2})`,
-                            marginBottom:'5px',boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
-                            {m.poster && <img src={m.poster} alt=""
-                              style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>}
-                            {m.rating && <div style={{position:'absolute',top:'5px',right:'5px',
-                              background:'#e91e8c',color:'white',fontSize:'9px',fontWeight:'700',
-                              padding:'2px 5px',borderRadius:'4px',display:'flex',alignItems:'center',gap:'2px'}}>
-                              <Star size={7} fill="white" strokeWidth={0}/> {m.rating}
-                            </div>}
-                          </div>
-                          <p style={{fontSize:'11px',fontWeight:'600',color:'#1c1c1e',margin:0,
-                            overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.title}</p>
-                          <p style={{fontSize:'10px',color:'#8e8e93',margin:'1px 0 0'}}>{m.year}</p>
-                        </button>
-                      );
-                    })}
+                    {searchResults.map(m=><GridCard key={m.id} movie={m} onTap={setDetail}/>)}
                   </div>
                 </>
             }
@@ -615,10 +745,10 @@ export default function DiscoverScreen() {
               </div>
             ) : (
               <div style={{paddingTop:'16px'}}>
-                <Row icon="🆕" title="Recently Added" movies={recent} onTap={setDetail}
+                <LandscapeRow icon="🆕" title="Recently Added" movies={recent} onTap={setDetail}
                   onViewAll={()=>setViewAll({title:'Recently Added',movies:recent})}/>
                 {topRated.length>0 && (
-                  <Row icon="⭐" title="Top Rated" movies={topRated} onTap={setDetail}
+                  <LandscapeRow icon="⭐" title="Top Rated" movies={topRated} onTap={setDetail}
                     onViewAll={()=>setViewAll({title:'Top Rated',movies:topRated})}/>
                 )}
                 {movies.length>0 && (
