@@ -12,6 +12,7 @@ import jwt as pyjwt
 
 import config
 from streamer import stream_media_file
+from cache_manager import load_all_caches, save_cache, delete_cache, get_cache_info
 from pyrogram import Client
 from pyrogram.errors import (
     PhoneNumberInvalid, PhoneCodeInvalid, PhoneCodeExpired,
@@ -93,6 +94,11 @@ discover_cache: Dict[str, dict] = {}
 _discover_lock = asyncio.Lock()
 _discover_done = False
 
+# ─── General file cache (all channels user has ever visited) ──────────────────
+# key: str(chat_id), value: {files: [...], scanned_at: str, channel_name: str}
+file_cache: Dict[str, dict] = {}
+_file_cache_lock = asyncio.Lock()
+
 async def refresh_discover():
     global discover_cache, _discover_done
     client = get_discover_client()
@@ -135,24 +141,68 @@ async def refresh_discover():
                         "duration": getattr(media, "duration", None),
                         "has_thumb": bool(getattr(media, "thumbs", None)),
                     })
+                channel_name = getattr(chat, "title", None) or ch_id_str
                 discover_cache[ch_id_str] = {
                     "id": ch_id, "str_id": ch_id_str,
-                    "name": getattr(chat, "title", None) or ch_id_str,
+                    "name": channel_name,
                     "username": getattr(chat, "username", None) or "",
                     "description": getattr(chat, "description", None) or "",
                     "file_count": len(files),
                     "files": files,
                 }
-                print(f"Discover: {ch_id_str} ({getattr(chat,'title','?')}) → {len(files)} files")
+                # Also save to general file_cache and Telegram
+                async with _file_cache_lock:
+                    file_cache[ch_id_str] = {
+                        "files": files,
+                        "scanned_at": datetime.utcnow().isoformat(),
+                        "channel_name": channel_name,
+                        "file_count": len(files),
+                    }
+                if config.CACHE_CHANNEL_ID:
+                    asyncio.create_task(save_cache(client, ch_id_str, files, channel_name))
+                print(f"Discover: {ch_id_str} ({channel_name}) → {len(files)} files")
             except Exception as e:
                 print(f"Discover failed for {ch_id_str}: {e}")
         _discover_done = True
+
+async def _load_startup_caches():
+    """Load all cached file lists from Telegram on startup."""
+    global file_cache, discover_cache, _discover_done
+    # Wait for a user session to be available (loaded from persistent session file if any)
+    # Try for up to 60 seconds
+    for _ in range(12):
+        client = get_discover_client()
+        if client:
+            break
+        await asyncio.sleep(5)
+    if not client:
+        print("[startup] No client available for cache load")
+        return
+    caches = await load_all_caches(client)
+    for chat_id_str, data in caches.items():
+        file_cache[chat_id_str] = data
+        # Also populate discover_cache for BOT_CHANNELS
+        if chat_id_str in config.BOT_CHANNELS:
+            discover_cache[chat_id_str] = {
+                **data,
+                "id": int(chat_id_str),
+                "str_id": chat_id_str,
+                "name": data.get("channel_name", chat_id_str),
+                "file_count": data.get("file_count", len(data.get("files", []))),
+            }
+    if any(s in file_cache for s in config.BOT_CHANNELS):
+        _discover_done = True
+    print(f"[startup] Loaded {len(caches)} channel caches from Telegram")
 
 # ─── App lifecycle ────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"AirBooks starting. BOT_CHANNELS: {config.BOT_CHANNELS}")
     print("Note: Discover requires a user to login first (bots cannot read chat history)")
+    # Load all caches from Telegram cache channel on startup
+    if config.CACHE_CHANNEL_ID:
+        print(f"[startup] Loading caches from Telegram channel {config.CACHE_CHANNEL_ID}...")
+        asyncio.create_task(_load_startup_caches())
     yield
     for c in user_sessions.values():
         try:
@@ -258,6 +308,29 @@ async def trigger_discover_refresh(user: dict = Depends(require_auth)):
     asyncio.create_task(refresh_discover())
     return {"message": "Refresh started"}
 
+@app.get("/api/cache/info")
+async def cache_info(user: dict = Depends(require_auth)):
+    """List all cached channels with metadata."""
+    memory_info = [
+        {"chat_id": k, "channel_name": v.get("channel_name",""), 
+         "file_count": v.get("file_count", len(v.get("files",[]))),
+         "scanned_at": v.get("scanned_at","")}
+        for k, v in file_cache.items()
+    ]
+    return {"cached_channels": len(file_cache), "channels": memory_info,
+            "cache_channel_id": config.CACHE_CHANNEL_ID}
+
+@app.delete("/api/cache/{chat_id}")
+async def clear_cache(chat_id: str, user: dict = Depends(require_auth)):
+    """Force clear cache for a channel (will re-scan next visit)."""
+    sid = user.get("session_id")
+    client = user_sessions.get(sid) if sid else None
+    if chat_id in file_cache:
+        del file_cache[chat_id]
+    if client and config.CACHE_CHANNEL_ID:
+        asyncio.create_task(delete_cache(client, chat_id))
+    return {"message": f"Cache cleared for {chat_id}"}
+
 # ─── User chats ───────────────────────────────────────────────────────────────
 @app.get("/api/chats")
 async def get_user_chats(client: Client = Depends(get_user_client)):
@@ -274,14 +347,24 @@ async def get_user_chats(client: Client = Depends(get_user_client)):
     return {"chats": chats}
 
 @app.get("/api/chats/{chat_id}/files")
-async def get_chat_files(chat_id: int, type: str = None,
+async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
                          client: Client = Depends(get_user_client)):
+    chat_id_str = str(chat_id)
+
+    # Return from cache if available and not forcing refresh
+    if not refresh and chat_id_str in file_cache:
+        all_files = file_cache[chat_id_str].get("files", [])
+        filtered = [f for f in all_files if not type or f.get("type") == type]
+        return {"files": filtered, "from_cache": True,
+                "scanned_at": file_cache[chat_id_str].get("scanned_at")}
+
+    # Scan all messages
     files = []
     try:
         async for msg in client.get_chat_history(chat_id):
             media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
             if not media:
-                if msg.photo and (not type or type == "image"):
+                if msg.photo:
                     files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
                                   "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
                                   "type": "image", "mime": "image/jpeg", "size": 0,
@@ -292,7 +375,7 @@ async def get_chat_files(chat_id: int, type: str = None,
             mime  = getattr(media,"mime_type","") or ""
             fname = getattr(media,"file_name","") or f"file_{msg.id}"
             ftype = media_type(mime, fname)
-            if ftype == "other" or (type and ftype != type): continue
+            if ftype == "other": continue
             files.append({"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
                           "channel_id": chat_id, "name": fname, "type": ftype, "mime": mime,
                           "size": getattr(media,"file_size",0),
@@ -301,7 +384,22 @@ async def get_chat_files(chat_id: int, type: str = None,
                           "duration": getattr(media,"duration",None),
                           "has_thumb": bool(getattr(media,"thumbs",None))})
     except Exception as e: raise HTTPException(500, str(e))
-    return {"files": files}
+
+    # Save to memory cache
+    async with _file_cache_lock:
+        file_cache[chat_id_str] = {
+            "files": files,
+            "scanned_at": datetime.utcnow().isoformat(),
+            "channel_name": str(chat_id),
+        }
+
+    # Save to Telegram cache channel in background
+    if config.CACHE_CHANNEL_ID:
+        asyncio.create_task(save_cache(client, chat_id, files, str(chat_id)))
+
+    # Return filtered by type
+    filtered = [f for f in files if not type or f.get("type") == type]
+    return {"files": filtered, "from_cache": False}
 
 # ─── Streaming ────────────────────────────────────────────────────────────────
 @app.get("/api/stream/{source}/{chat_id}/{msg_id}")

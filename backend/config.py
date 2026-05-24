@@ -15,5 +15,8 @@ BOT_CHANNELS      = [c.strip() for c in os.getenv("BOT_CHANNELS", "").split(",")
 # Sessions stored here
 SESSIONS_DIR      = os.getenv("SESSIONS_DIR", "./sessions")
 
+# Telegram channel used as JSON cache storage
+CACHE_CHANNEL_ID  = int(os.getenv("CACHE_CHANNEL_ID", "0"))
+
 import pathlib
 pathlib.Path(SESSIONS_DIR).mkdir(parents=True, exist_ok=True)
