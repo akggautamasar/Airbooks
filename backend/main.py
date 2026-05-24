@@ -297,11 +297,87 @@ async def get_discover_channels():
             "has_session": get_discover_client() is not None}
 
 @app.get("/api/discover/channels/{ch_id}/files")
-async def get_channel_files(ch_id: str, type: str = None):
-    if ch_id not in discover_cache: raise HTTPException(404, "Channel not found")
+async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False):
+    """Get all files in a discover channel. refresh=true forces re-scan."""
+    # If refresh requested, clear all caches and trigger re-scan synchronously
+    if refresh:
+        # Clear from memory caches
+        discover_cache.pop(ch_id, None)
+        file_cache.pop(ch_id, None)
+        # Delete from Telegram JSON cache + re-scan
+        client = get_discover_client()
+        if client:
+            try:
+                # Delete old JSON cache
+                if config.CACHE_CHANNEL_ID:
+                    await delete_cache(client, ch_id)
+                # Re-scan the channel
+                ch_id_int = int(ch_id)
+                files = []
+                async for msg in client.get_chat_history(ch_id_int):
+                    media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
+                    if not media:
+                        if msg.photo:
+                            files.append({"id": f"{ch_id_int}_{msg.id}", "msg_id": msg.id,
+                                          "channel_id": ch_id_int, "name": f"photo_{msg.id}.jpg",
+                                          "type": "image", "mime": "image/jpeg", "size": 0,
+                                          "date": msg.date.timestamp() if msg.date else 0,
+                                          "caption": msg.caption or "", "has_thumb": True})
+                        continue
+                    mime  = getattr(media,"mime_type","") or ""
+                    fname = getattr(media,"file_name","") or f"file_{msg.id}"
+                    ftype = media_type(mime, fname)
+                    if ftype == "other": continue
+                    files.append({"id": f"{ch_id_int}_{msg.id}", "msg_id": msg.id,
+                                  "channel_id": ch_id_int, "name": fname,
+                                  "type": ftype, "mime": mime,
+                                  "size": getattr(media,"file_size",0),
+                                  "date": msg.date.timestamp() if msg.date else 0,
+                                  "caption": msg.caption or "",
+                                  "duration": getattr(media,"duration",None),
+                                  "has_thumb": bool(getattr(media,"thumbs",None))})
+                # Get channel name
+                try:
+                    chat_obj = await client.get_chat(ch_id_int)
+                    channel_name = getattr(chat_obj, "title", None) or ch_id
+                except Exception:
+                    channel_name = ch_id
+                # Save to discover_cache
+                discover_cache[ch_id] = {
+                    "id": ch_id_int, "str_id": ch_id,
+                    "name": channel_name,
+                    "file_count": len(files),
+                    "files": files,
+                    "scanned_at": datetime.utcnow().isoformat(),
+                }
+                # Save to file_cache too
+                async with _file_cache_lock:
+                    file_cache[ch_id] = {
+                        "files": files,
+                        "scanned_at": datetime.utcnow().isoformat(),
+                        "channel_name": channel_name,
+                        "file_count": len(files),
+                    }
+                # Save new JSON to Telegram cache channel
+                if config.CACHE_CHANNEL_ID:
+                    asyncio.create_task(save_cache(client, ch_id, files, channel_name))
+            except Exception as e:
+                raise HTTPException(500, f"Refresh failed: {str(e)}")
+
+    # Serve from cache
+    if ch_id not in discover_cache:
+        # Try file_cache as fallback
+        if ch_id in file_cache:
+            files = file_cache[ch_id].get("files", [])
+            if type: files = [f for f in files if f.get("type") == type]
+            return {"files": files,
+                    "channel": {"name": file_cache[ch_id].get("channel_name", ""),
+                                "scanned_at": file_cache[ch_id].get("scanned_at", "")}}
+        raise HTTPException(404, "Channel not found")
     files = discover_cache[ch_id]["files"]
     if type: files = [f for f in files if f["type"] == type]
-    return {"files": files, "channel": {k: v for k, v in discover_cache[ch_id].items() if k != "files"}}
+    return {"files": files,
+            "channel": {k: v for k, v in discover_cache[ch_id].items() if k != "files"}}
 
 @app.post("/api/discover/refresh")
 async def trigger_discover_refresh(user: dict = Depends(require_auth)):
