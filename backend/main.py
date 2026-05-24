@@ -24,9 +24,8 @@ user_sessions: Dict[str, Client] = {}
 # The "admin" session used for Discover scanning (first user who logs in, or pre-configured)
 discover_session: Optional[str] = None  # session_id of the session used for discover
 
-# Persistent bot client — used ONLY for downloading cache JSONs from cache channel
-# Bots can read messages sent to them / channels they admin
-_bot_client: Optional[Client] = None
+# Bot client — used for Discover streaming when no user session is available
+bot_client: Optional[Client] = None
 
 security = HTTPBearer(auto_error=False)
 
@@ -60,19 +59,30 @@ async def get_user_client(user: dict = Depends(require_auth)) -> Client:
     return c
 
 def get_discover_client() -> Optional[Client]:
-    """Get a user client suitable for scanning Discover channels."""
+    """Get a client suitable for scanning/streaming Discover channels.
+    Priority: designated user session → any user session → bot client.
+    """
     global discover_session
     # Try the designated discover session first
     if discover_session and discover_session in user_sessions:
         c = user_sessions[discover_session]
         if c.is_connected:
             return c
-    # Fall back to any available connected session
+    # Fall back to any available connected user session
     for sid, c in user_sessions.items():
         if c.is_connected:
             discover_session = sid
             return c
+    # Last resort: bot client (always available if BOT_TOKEN is set)
+    if bot_client and bot_client.is_connected:
+        return bot_client
     return None
+
+def get_bot_or_discover_client() -> Optional[Client]:
+    """Return bot client if available, else fall back to user discover client."""
+    if bot_client and bot_client.is_connected:
+        return bot_client
+    return get_discover_client()
 
 # ─── File type helpers ────────────────────────────────────────────────────────
 VIDEO_MIMES = {"video/mp4","video/x-matroska","video/webm","video/x-msvideo",
@@ -169,36 +179,12 @@ async def refresh_discover():
                 print(f"Discover failed for {ch_id_str}: {e}")
         _discover_done = True
 
-async def _load_startup_caches_bot():
-    """Load caches immediately using bot client (no waiting for user)."""
-    global file_cache, discover_cache, _discover_done
-    if not _bot_client or not _bot_client.is_connected:
-        return
-    caches = await load_all_caches(_bot_client)
-    for chat_id_str, data in caches.items():
-        file_cache[chat_id_str] = {
-            "files": data.get("files", []),
-            "scanned_at": data.get("scanned_at", ""),
-            "channel_name": data.get("channel_name", ""),
-            "file_count": data.get("file_count", 0),
-            "newest_msg_id": data.get("newest_msg_id", 0),
-        }
-        if chat_id_str in config.BOT_CHANNELS:
-            discover_cache[chat_id_str] = {
-                **file_cache[chat_id_str],
-                "id": int(chat_id_str),
-                "str_id": chat_id_str,
-                "name": data.get("channel_name", chat_id_str),
-            }
-    if any(s in file_cache for s in config.BOT_CHANNELS):
-        _discover_done = True
-    print(f"[startup] Bot loaded {len(caches)} channel caches instantly")
-
 async def _load_startup_caches():
-    """Load all cached file lists from Telegram on startup (fallback - waits for user)."""
+    """Load all cached file lists from Telegram on startup."""
     global file_cache, discover_cache, _discover_done
-    # Wait for a user session to be available
-    for _ in range(24):  # wait up to 2 minutes
+    # Wait for a user session to be available (loaded from persistent session file if any)
+    # Try for up to 60 seconds
+    for _ in range(12):
         client = get_discover_client()
         if client:
             break
@@ -225,38 +211,34 @@ async def _load_startup_caches():
 # ─── App lifecycle ────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _bot_client
+    global bot_client
     print(f"AirBooks starting. BOT_CHANNELS: {config.BOT_CHANNELS}")
-
-    # Start bot client immediately for cache channel access
-    if config.BOT_TOKEN and config.API_ID and config.API_HASH and config.CACHE_CHANNEL_ID:
+    # Start bot client if BOT_TOKEN is configured
+    if config.BOT_TOKEN:
         try:
-            _bot_client = Client(
-                "bot_cache_loader",
+            bot_client = Client(
+                "airbooks_bot",
                 api_id=config.API_ID,
                 api_hash=config.API_HASH,
                 bot_token=config.BOT_TOKEN,
-                workdir=config.SESSIONS_DIR,
+                in_memory=True,
             )
-            await _bot_client.start()
-            print("[startup] Bot client started — loading caches from Telegram...")
-            # Load caches immediately using bot client
-            asyncio.create_task(_load_startup_caches_bot())
+            await bot_client.start()
+            me = await bot_client.get_me()
+            print(f"[bot] Started as @{me.username} — will handle Discover streaming for guests")
         except Exception as e:
-            print(f"[startup] Bot client failed: {e}")
-            _bot_client = None
-            # Fallback: wait for user session
-            if config.CACHE_CHANNEL_ID:
-                asyncio.create_task(_load_startup_caches())
-    elif config.CACHE_CHANNEL_ID:
-        print("[startup] No BOT_TOKEN — will load caches after first user login")
+            print(f"[bot] Failed to start bot client: {e}")
+            bot_client = None
+    else:
+        print("[bot] No BOT_TOKEN configured — guests cannot stream Discover content")
+    # Load all caches from Telegram cache channel on startup
+    if config.CACHE_CHANNEL_ID:
+        print(f"[startup] Loading caches from Telegram channel {config.CACHE_CHANNEL_ID}...")
         asyncio.create_task(_load_startup_caches())
-
     yield
-
     # Cleanup
-    if _bot_client and _bot_client.is_connected:
-        try: await _bot_client.stop()
+    if bot_client and bot_client.is_connected:
+        try: await bot_client.stop()
         except Exception: pass
     for c in user_sessions.values():
         try:
@@ -362,19 +344,13 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
         client = get_discover_client()
         if client:
             try:
-                # Delete old JSON cache (use bot client if available)
+                # Delete old JSON cache
                 if config.CACHE_CHANNEL_ID:
-                    del_client = _bot_client if (_bot_client and _bot_client.is_connected) else client
-                    await delete_cache(del_client, ch_id)
-                # Incremental re-scan — only get messages newer than what we have
+                    await delete_cache(client, ch_id)
+                # Re-scan the channel
                 ch_id_int = int(ch_id)
-                existing_files = file_cache.get(ch_id, {}).get("files", [])
-                existing_ids = {f["msg_id"] for f in existing_files}
-                newest_known = file_cache.get(ch_id, {}).get("newest_msg_id", 0)
                 files = []
                 async for msg in client.get_chat_history(ch_id_int):
-                    if msg.id <= newest_known and newest_known > 0 and not refresh:
-                        break
                     media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
                     if not media:
                         if msg.photo:
@@ -396,11 +372,6 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                                   "caption": msg.caption or "",
                                   "duration": getattr(media,"duration",None),
                                   "has_thumb": bool(getattr(media,"thumbs",None))})
-                # Merge new + existing files
-                all_msg_ids = [f["msg_id"] for f in files]
-                new_newest = max(all_msg_ids) if all_msg_ids else newest_known
-                files = files + [f for f in existing_files if f["msg_id"] not in {ff["msg_id"] for ff in files}]
-
                 # Get channel name
                 try:
                     chat_obj = await client.get_chat(ch_id_int)
@@ -414,7 +385,6 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                     "file_count": len(files),
                     "files": files,
                     "scanned_at": datetime.utcnow().isoformat(),
-                    "newest_msg_id": new_newest,
                 }
                 # Save to file_cache too
                 async with _file_cache_lock:
@@ -423,7 +393,6 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                         "scanned_at": datetime.utcnow().isoformat(),
                         "channel_name": channel_name,
                         "file_count": len(files),
-                        "newest_msg_id": new_newest,
                     }
                 # Save new JSON to Telegram cache channel
                 if config.CACHE_CHANNEL_ID:
@@ -585,15 +554,18 @@ async def get_chat_files(chat_id: int, type: str = None, refresh: bool = False,
 @app.get("/api/stream/{source}/{chat_id}/{msg_id}")
 async def stream_file(source: str, chat_id: int, msg_id: int,
                       request: Request, user: dict = Depends(require_auth)):
-    # Pick client: prefer user's own session (peer already resolved),
-    # fall back to discover session
     sid = user.get("session_id")
+    ch_id_str = str(chat_id)
+    is_discover_channel = ch_id_str in config.BOT_CHANNELS
+
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
+        # Logged-in user — always use their own session (works for everything)
         client = user_sessions[sid]
-    elif source == "discover":
-        client = get_discover_client()
+    elif is_discover_channel:
+        # Guest or other user accessing a BOT_CHANNEL — use bot client
+        client = get_bot_or_discover_client()
         if not client:
-            raise HTTPException(503, "Please login first to stream content")
+            raise HTTPException(503, "Streaming unavailable — bot not configured")
     else:
         raise HTTPException(401, "Not authenticated")
 
@@ -609,12 +581,15 @@ async def get_thumbnail(source: str, chat_id: int, msg_id: int,
     """Stream video/audio thumbnail (small JPEG)"""
     from fastapi.responses import Response as FastResp
     sid = user.get("session_id")
+    ch_id_str = str(chat_id)
+    is_discover_channel = ch_id_str in config.BOT_CHANNELS
+
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
         client = user_sessions[sid]
-    elif source == "discover":
-        client = get_discover_client()
+    elif is_discover_channel:
+        client = get_bot_or_discover_client()
         if not client:
-            raise HTTPException(503, "No session")
+            raise HTTPException(503, "No bot client available")
     else:
         raise HTTPException(401, "Not authenticated")
     try:
@@ -660,13 +635,13 @@ async def get_chat_photo(source: str, chat_id: int, request: Request,
         return FastResp(content=_photo_cache[chat_id], media_type="image/jpeg",
             headers={"Cache-Control":"public,max-age=86400","Access-Control-Allow-Origin":"*"})
 
-    # Try user session first
+    # Try user session first, then bot, then any discover client
     client = None
     sid = user.get("session_id")
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
         client = user_sessions[sid]
     if not client:
-        client = get_discover_client()
+        client = get_bot_or_discover_client()
     if not client:
         raise HTTPException(503, "No session available")
 
@@ -700,12 +675,15 @@ async def stream_file_head(source: str, chat_id: int, msg_id: int,
     """HEAD request — returns file metadata without body (needed by video players for seeking)"""
     from fastapi.responses import Response as FastResponse
     sid = user.get("session_id")
+    ch_id_str = str(chat_id)
+    is_discover_channel = ch_id_str in config.BOT_CHANNELS
+
     if sid and sid in user_sessions and user_sessions[sid].is_connected:
         client = user_sessions[sid]
-    elif source == "discover":
-        client = get_discover_client()
+    elif is_discover_channel:
+        client = get_bot_or_discover_client()
         if not client:
-            raise HTTPException(503, "No session")
+            raise HTTPException(503, "No bot client available")
     else:
         raise HTTPException(401, "Not authenticated")
 
