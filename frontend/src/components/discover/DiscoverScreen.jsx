@@ -82,66 +82,53 @@ function UserPill({ user }) {
 
 // ── Hero (Telefin-style, full-bleed, crossfade) ────────────────────────────
 function Hero({ movies, onPlay, onSearch, onBookmark, user }) {
-  const [idx, setIdx]     = useState(0);
-  const [prevIdx, setPrev] = useState(null);
-  const [fading, setFading] = useState(false);
-  const timerRef = useRef(null);
+  const [idx, setIdx]         = useState(0);
+  const [visible, setVisible] = useState(true);
+  const idxRef                = useRef(0);
 
-  const advance = useCallback((next) => {
-    setPrev(idx);
-    setFading(true);
-    setTimeout(() => {
-      setIdx(next);
-      setPrev(null);
-      setFading(false);
-    }, 500);
-  }, [idx]);
+  useEffect(() => { idxRef.current = idx; }, [idx]);
+
+  useEffect(() => {
+    if (idx >= movies.length && movies.length > 0) setIdx(0);
+  }, [movies.length]);
+
+  const goTo = useCallback((next) => {
+    setVisible(false);
+    setTimeout(() => { setIdx(next); setVisible(true); }, 350);
+  }, []);
 
   useEffect(() => {
     if (movies.length < 2) return;
-    timerRef.current = setInterval(() => {
-      setIdx(i => {
-        const next = (i + 1) % movies.length;
-        setPrev(i);
-        setFading(true);
-        setTimeout(() => { setIdx(next); setPrev(null); setFading(false); }, 500);
-        return i; // hold current until fade done
-      });
+    const t = setInterval(() => {
+      goTo((idxRef.current + 1) % movies.length);
     }, 5000);
-    return () => clearInterval(timerRef.current);
-  }, [movies.length]);
+    return () => clearInterval(t);
+  }, [movies.length, goTo]);
 
   if (!movies.length) return null;
 
-  const m    = movies[idx];
-  const prev = prevIdx !== null ? movies[prevIdx] : null;
-  const [g1,g2] = grad(m.id);
+  const safeIdx  = Math.min(idx, movies.length - 1);
+  const m        = movies[safeIdx];
+  const [g1,g2]  = grad(m.id);
+  const bgImage  = m.backdrop || m.poster;
 
   return (
     <div style={{ position:'relative', width:'100%', height:'58vh', minHeight:'320px', overflow:'hidden', flexShrink:0 }}>
 
-      {/* Prev backdrop (fading out) */}
-      {prev && (
-        <div style={{
-          position:'absolute', inset:0, zIndex:1,
-          opacity: fading ? 0 : 1,
-          transition:'opacity 0.5s ease',
-        }}>
-          {prev.backdrop
-            ? <img src={prev.backdrop} alt="" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
-            : <div style={{width:'100%',height:'100%',background:`linear-gradient(135deg,${grad(prev.id)[0]},${grad(prev.id)[1]})`}}/>
-          }
-        </div>
-      )}
-
-      {/* Current backdrop */}
+      {/* Backdrop with crossfade via opacity */}
       <div style={{
-        position:'absolute', inset:0, zIndex:2,
-        opacity: fading ? 0 : 1,
-        transition:'opacity 0.5s ease',
+        position:'absolute', inset:0, zIndex:1,
+        opacity: visible ? 1 : 0,
+        transition:'opacity 0.35s ease',
       }}>
-        {m.backdrop
-          ? <img src={m.backdrop} alt={m.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+        {bgImage
+          ? <img src={bgImage} alt={m.title}
+              style={{
+                width:'100%', height:'100%', objectFit:'cover', display:'block',
+                // If using poster as backdrop, scale+blur it to fill nicely
+                filter: m.backdrop ? 'none' : 'blur(3px) brightness(0.75)',
+                transform: m.backdrop ? 'none' : 'scale(1.08)',
+              }}/>
           : <div style={{width:'100%',height:'100%',background:`linear-gradient(135deg,${g1},${g2})`}}/>
         }
       </div>
@@ -216,10 +203,10 @@ function Hero({ movies, onPlay, onSearch, onBookmark, user }) {
         {movies.length > 1 && (
           <div style={{display:'flex', gap:'6px', marginTop:'16px'}}>
             {movies.slice(0,8).map((_,i) => (
-              <div key={i} onClick={() => advance((i))} style={{
-                width: i===idx ? '20px' : '6px',
+              <div key={i} onClick={() => goTo(i)} style={{
+                width: i===safeIdx ? '20px' : '6px',
                 height:'6px', borderRadius:'3px',
-                background: i===idx ? 'white' : 'rgba(255,255,255,0.35)',
+                background: i===safeIdx ? 'white' : 'rgba(255,255,255,0.35)',
                 cursor:'pointer', transition:'all 0.35s ease',
               }}/>
             ))}
@@ -733,8 +720,14 @@ export default function DiscoverScreen() {
   const series   = useMemo(()=>all.filter(m=>m.isSeries),[all]);
   const recent   = useMemo(()=>[...all].sort((a,b)=>b.date-a.date).slice(0,20),[all]);
   const topRated = useMemo(()=>[...all].filter(m=>m.rating).sort((a,b)=>parseFloat(b.rating)-parseFloat(a.rating)).slice(0,20),[all]);
-  // Hero: top-rated with backdrops, cycling through them
-  const heroList = useMemo(()=>topRated.filter(m=>m.backdrop).slice(0,8),[topRated]);
+  // Hero: prefer top-rated with backdrops, fall back to any movie with image, then raw recent
+  const heroList = useMemo(()=>{
+    const withBackdrop = topRated.filter(m=>m.backdrop);
+    if (withBackdrop.length >= 3) return withBackdrop.slice(0,8);
+    const withImage = [...all].sort((a,b)=>b.date-a.date).filter(m=>m.backdrop||m.poster).slice(0,8);
+    if (withImage.length >= 1) return withImage;
+    return recent.slice(0,8);
+  },[topRated, all, recent]);
 
   const searchResults = useMemo(()=>{
     if(!search.trim()) return [];
@@ -829,17 +822,24 @@ export default function DiscoverScreen() {
                   onBookmark={()=>setShowBookmarks(true)}
                   user={state.user}
                 />
-              : loading && all.length===0
-                ? <div style={{
-                    width:'100%', height:'58vh', minHeight:'320px',
-                    background:'linear-gradient(135deg,#1a1a2e,#0f3460)',
-                    display:'flex', alignItems:'flex-end', padding:'20px',
-                    boxSizing:'border-box',
-                  }}>
-                    {/* Skeleton shimmer */}
-                    <div style={{width:'60%',height:'28px',background:'rgba(255,255,255,0.1)',borderRadius:'8px'}}/>
-                  </div>
-                : <div style={{height:'88px'}}/>
+              : /* Skeleton — always show while loading, even before TMDB enrichment */
+                <div style={{
+                  width:'100%', height:'58vh', minHeight:'320px',
+                  background:'linear-gradient(135deg,#1a1a2e,#0f3460)',
+                  position:'relative', overflow:'hidden',
+                  display:'flex', flexDirection:'column',
+                  justifyContent:'flex-end', padding:'20px',
+                  boxSizing:'border-box',
+                }}>
+                  {/* Shimmer overlay */}
+                  <div style={{
+                    position:'absolute', inset:0,
+                    background:'linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.04) 50%,transparent 100%)',
+                    animation:'shimmer 2s infinite',
+                  }}/>
+                  <div style={{width:'55%',height:'24px',background:'rgba(255,255,255,0.12)',borderRadius:'6px',marginBottom:'14px'}}/>
+                  <div style={{width:'120px',height:'38px',background:'rgba(255,255,255,0.1)',borderRadius:'20px'}}/>
+                </div>
             }
 
             {loading && all.length===0 ? (
@@ -894,7 +894,7 @@ export default function DiscoverScreen() {
         </button>
       )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}</style>
     </div>
   );
 }
