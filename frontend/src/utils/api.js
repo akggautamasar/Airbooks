@@ -70,6 +70,13 @@ export const api = {
     return res;
   },
 
+  // SSE scan progress — returns an EventSource
+  scanProgress(chatId, forceRefresh = false) {
+    const params = new URLSearchParams({ token: token() });
+    if (forceRefresh) params.set('refresh', 'true');
+    return new EventSource(`${BASE}/chats/${chatId}/scan-progress?${params}`);
+  },
+
   // Stream URL builder - uses token in query param
   streamUrl: (source, chatId, msgId) =>
     `${BASE}/stream/${source}/${chatId}/${msgId}?token=${encodeURIComponent(token())}`,
