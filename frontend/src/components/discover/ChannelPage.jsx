@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { ArrowLeft, Film, Music, Image, FileText, BookOpen, Search,
-         Play, ExternalLink, Clock, AlignJustify, SortAsc } from 'lucide-react';
+         Play, ExternalLink } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useApp } from '../../store/AppContext';
 
@@ -249,6 +249,8 @@ export default function ChannelPage({ channel, source, onBack }) {
   const [sort, setSort] = useState('date');
   const [order, setOrder] = useState('desc');
   const [viewerFile, setViewerFile] = useState(null);
+  const [scannedAt, setScannedAt] = useState(null);
+  const [forceRef, setForceRef] = useState(false);
   const fileCache = useRef({});
 
   useEffect(() => {
@@ -262,13 +264,15 @@ export default function ChannelPage({ channel, source, onBack }) {
     setLoading(true); setFiles([]);
     const load = source === 'discover'
       ? api.getChannelFiles(channel.str_id||String(channel.id), tab)
-      : api.getChatFiles(channel.id, tab);
+      : api.getChatFiles(channel.id, tab, forceRef);
     load.then(r => {
       const f = r.files||[];
       fileCache.current[cacheKey] = f;
       setFiles(f);
+      if (r.scanned_at) setScannedAt(r.scanned_at);
     }).catch(()=>{}).finally(()=>setLoading(false));
-  }, [tab, channel.id]);
+    setForceRef(false);
+  }, [tab, channel.id, forceRef]);
 
   const sorted = useMemo(() => {
     let f = files.filter(f =>
@@ -308,7 +312,18 @@ export default function ChannelPage({ channel, source, onBack }) {
                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>
             {channel.name||channel.title}
           </h2>
+          <button onClick={() => { setForceRef(true); fileCache.current = {}; }}
+            style={{ width:'32px', height:'32px', borderRadius:'10px', background:'white', border:'none',
+                     cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+                     boxShadow:'0 1px 3px rgba(0,0,0,0.1)', flexShrink:0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3478f6" strokeWidth="2.5" strokeLinecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+          </button>
         </div>
+        {scannedAt && (
+          <p style={{ fontSize:'10px', color:'#8e8e93', margin:'-8px 0 8px 48px' }}>
+            Cached · {new Date(scannedAt).toLocaleDateString()}
+          </p>
+        )}
         {/* Search */}
         <div style={{ position:'relative', marginBottom:'12px' }}>
           <Search size={14} style={{ position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', color:'#8e8e93' }} />
