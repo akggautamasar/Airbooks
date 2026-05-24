@@ -24,6 +24,10 @@ user_sessions: Dict[str, Client] = {}
 # The "admin" session used for Discover scanning (first user who logs in, or pre-configured)
 discover_session: Optional[str] = None  # session_id of the session used for discover
 
+# Persistent bot client — used ONLY for downloading cache JSONs from cache channel
+# Bots can read messages sent to them / channels they admin
+_bot_client: Optional[Client] = None
+
 security = HTTPBearer(auto_error=False)
 
 def create_jwt(data: dict, hours: int = 24 * 30) -> str:
@@ -165,12 +169,36 @@ async def refresh_discover():
                 print(f"Discover failed for {ch_id_str}: {e}")
         _discover_done = True
 
-async def _load_startup_caches():
-    """Load all cached file lists from Telegram on startup."""
+async def _load_startup_caches_bot():
+    """Load caches immediately using bot client (no waiting for user)."""
     global file_cache, discover_cache, _discover_done
-    # Wait for a user session to be available (loaded from persistent session file if any)
-    # Try for up to 60 seconds
-    for _ in range(12):
+    if not _bot_client or not _bot_client.is_connected:
+        return
+    caches = await load_all_caches(_bot_client)
+    for chat_id_str, data in caches.items():
+        file_cache[chat_id_str] = {
+            "files": data.get("files", []),
+            "scanned_at": data.get("scanned_at", ""),
+            "channel_name": data.get("channel_name", ""),
+            "file_count": data.get("file_count", 0),
+            "newest_msg_id": data.get("newest_msg_id", 0),
+        }
+        if chat_id_str in config.BOT_CHANNELS:
+            discover_cache[chat_id_str] = {
+                **file_cache[chat_id_str],
+                "id": int(chat_id_str),
+                "str_id": chat_id_str,
+                "name": data.get("channel_name", chat_id_str),
+            }
+    if any(s in file_cache for s in config.BOT_CHANNELS):
+        _discover_done = True
+    print(f"[startup] Bot loaded {len(caches)} channel caches instantly")
+
+async def _load_startup_caches():
+    """Load all cached file lists from Telegram on startup (fallback - waits for user)."""
+    global file_cache, discover_cache, _discover_done
+    # Wait for a user session to be available
+    for _ in range(24):  # wait up to 2 minutes
         client = get_discover_client()
         if client:
             break
@@ -197,13 +225,39 @@ async def _load_startup_caches():
 # ─── App lifecycle ────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _bot_client
     print(f"AirBooks starting. BOT_CHANNELS: {config.BOT_CHANNELS}")
-    print("Note: Discover requires a user to login first (bots cannot read chat history)")
-    # Load all caches from Telegram cache channel on startup
-    if config.CACHE_CHANNEL_ID:
-        print(f"[startup] Loading caches from Telegram channel {config.CACHE_CHANNEL_ID}...")
+
+    # Start bot client immediately for cache channel access
+    if config.BOT_TOKEN and config.API_ID and config.API_HASH and config.CACHE_CHANNEL_ID:
+        try:
+            _bot_client = Client(
+                "bot_cache_loader",
+                api_id=config.API_ID,
+                api_hash=config.API_HASH,
+                bot_token=config.BOT_TOKEN,
+                workdir=config.SESSIONS_DIR,
+            )
+            await _bot_client.start()
+            print("[startup] Bot client started — loading caches from Telegram...")
+            # Load caches immediately using bot client
+            asyncio.create_task(_load_startup_caches_bot())
+        except Exception as e:
+            print(f"[startup] Bot client failed: {e}")
+            _bot_client = None
+            # Fallback: wait for user session
+            if config.CACHE_CHANNEL_ID:
+                asyncio.create_task(_load_startup_caches())
+    elif config.CACHE_CHANNEL_ID:
+        print("[startup] No BOT_TOKEN — will load caches after first user login")
         asyncio.create_task(_load_startup_caches())
+
     yield
+
+    # Cleanup
+    if _bot_client and _bot_client.is_connected:
+        try: await _bot_client.stop()
+        except Exception: pass
     for c in user_sessions.values():
         try:
             if c.is_connected: await c.stop()
@@ -308,13 +362,19 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
         client = get_discover_client()
         if client:
             try:
-                # Delete old JSON cache
+                # Delete old JSON cache (use bot client if available)
                 if config.CACHE_CHANNEL_ID:
-                    await delete_cache(client, ch_id)
-                # Re-scan the channel
+                    del_client = _bot_client if (_bot_client and _bot_client.is_connected) else client
+                    await delete_cache(del_client, ch_id)
+                # Incremental re-scan — only get messages newer than what we have
                 ch_id_int = int(ch_id)
+                existing_files = file_cache.get(ch_id, {}).get("files", [])
+                existing_ids = {f["msg_id"] for f in existing_files}
+                newest_known = file_cache.get(ch_id, {}).get("newest_msg_id", 0)
                 files = []
                 async for msg in client.get_chat_history(ch_id_int):
+                    if msg.id <= newest_known and newest_known > 0 and not refresh:
+                        break
                     media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
                     if not media:
                         if msg.photo:
@@ -336,6 +396,11 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                                   "caption": msg.caption or "",
                                   "duration": getattr(media,"duration",None),
                                   "has_thumb": bool(getattr(media,"thumbs",None))})
+                # Merge new + existing files
+                all_msg_ids = [f["msg_id"] for f in files]
+                new_newest = max(all_msg_ids) if all_msg_ids else newest_known
+                files = files + [f for f in existing_files if f["msg_id"] not in {ff["msg_id"] for ff in files}]
+
                 # Get channel name
                 try:
                     chat_obj = await client.get_chat(ch_id_int)
@@ -349,6 +414,7 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                     "file_count": len(files),
                     "files": files,
                     "scanned_at": datetime.utcnow().isoformat(),
+                    "newest_msg_id": new_newest,
                 }
                 # Save to file_cache too
                 async with _file_cache_lock:
@@ -357,6 +423,7 @@ async def get_channel_files(ch_id: str, type: str = None, refresh: bool = False)
                         "scanned_at": datetime.utcnow().isoformat(),
                         "channel_name": channel_name,
                         "file_count": len(files),
+                        "newest_msg_id": new_newest,
                     }
                 # Save new JSON to Telegram cache channel
                 if config.CACHE_CHANNEL_ID:
