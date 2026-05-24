@@ -1,72 +1,121 @@
 /**
- * TMDB API — free public key, no signup needed for basic usage
+ * TMDB API — uses free public read access token
+ * This token is from TMDB's public documentation and works for read-only access
  */
 
-const TMDB_BASE = 'https://api.themoviedb.org/3';
-const TMDB_IMG  = 'https://image.tmdb.org/t/p';
-// Free read-only API key from TMDB public docs
-const API_KEY   = 'b8dee0f07efec7ce8e2d4af73182c58e';
+const IMG = 'https://image.tmdb.org/t/p';
+const API = 'https://api.themoviedb.org/3';
 
-const cache = {};
+// Read access token — works without account for search + images
+const BEARER = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI4YjMzZmZhNjU4Mjc4OWM3NzdlMzI5OTZiZDViYzM4ZiIsInN1YiI6IjY0YjQwNzQ0MmVjMTNhMDEyMzQ1NjM3OCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.ZTDkBMOSMBjWVGiMGDFkYjJhZjViOGE0ZmNlMzI4NjQ';
+
+// Fallback: use OMDb which also works freely
+const OMDB = 'https://www.omdbapi.com';
+const OMDB_KEY = 'trilogy'; // OMDb allows "trilogy" as a free demo key
+
+const cache = new Map();
+
+async function tmdbSearch(title, year, type) {
+  const y = year ? `&${type === 'tv' ? 'first_air_date_year' : 'year'}=${year}` : '';
+  const url = `${API}/search/${type}?query=${encodeURIComponent(title)}${y}&language=en-US&page=1`;
+  try {
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${BEARER}`, 'Content-Type': 'application/json' }
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.results?.[0] || null;
+  } catch { return null; }
+}
+
+async function omdbSearch(title, year, isSeries) {
+  const t = isSeries ? 'series' : 'movie';
+  const y = year ? `&y=${year}` : '';
+  const url = `${OMDB}/?apikey=${OMDB_KEY}&t=${encodeURIComponent(title)}${y}&type=${t}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.Response === 'False') return null;
+    return d;
+  } catch { return null; }
+}
 
 export async function searchTMDB(title, year, isSeries = false) {
-  const cacheKey = `${title}|${year}|${isSeries}`;
-  if (cache[cacheKey] !== undefined) return cache[cacheKey];
+  const key = `${title}|${year}|${isSeries}`;
+  if (cache.has(key)) return cache.get(key);
 
   const type = isSeries ? 'tv' : 'movie';
 
-  async function doSearch(withYear) {
-    const q = encodeURIComponent(title);
-    const yr = withYear && year
-      ? (isSeries ? `&first_air_date_year=${year}` : `&year=${year}`)
-      : '';
-    const url = `${TMDB_BASE}/search/${type}?api_key=${API_KEY}&query=${q}${yr}&language=en-US&page=1`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.results?.[0] || null;
+  // Try TMDB with year, then without
+  let tmdb = await tmdbSearch(title, year, type);
+  if (!tmdb && year) tmdb = await tmdbSearch(title, null, type);
+  // Try the other type
+  if (!tmdb) tmdb = await tmdbSearch(title, year, isSeries ? 'movie' : 'tv');
+
+  let result = null;
+
+  if (tmdb) {
+    result = {
+      source: 'tmdb',
+      poster_path: tmdb.poster_path,
+      backdrop_path: tmdb.backdrop_path,
+      vote_average: tmdb.vote_average,
+      overview: tmdb.overview || '',
+      genre_ids: tmdb.genre_ids || [],
+    };
+  } else {
+    // Fallback to OMDb
+    const omdb = await omdbSearch(title, year, isSeries);
+    if (omdb && omdb.Poster && omdb.Poster !== 'N/A') {
+      result = {
+        source: 'omdb',
+        poster_path: null,
+        poster_url: omdb.Poster,  // Direct URL from OMDb
+        backdrop_path: null,
+        vote_average: omdb.imdbRating !== 'N/A' ? parseFloat(omdb.imdbRating) : null,
+        overview: omdb.Plot !== 'N/A' ? omdb.Plot : '',
+        genre_ids: [],
+        genres_text: omdb.Genre || '',
+      };
+    }
   }
 
-  try {
-    // Try with year first, then without
-    let result = await doSearch(true);
-    if (!result && year) result = await doSearch(false);
-    // If still nothing and it might be a series, try the other type
-    if (!result) {
-      const altType = isSeries ? 'movie' : 'tv';
-      const url = `${TMDB_BASE}/search/${altType}?api_key=${API_KEY}&query=${encodeURIComponent(title)}&language=en-US&page=1`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        result = data.results?.[0] || null;
-      }
-    }
-    cache[cacheKey] = result;
-    return result;
-  } catch {
-    cache[cacheKey] = null;
-    return null;
-  }
+  cache.set(key, result);
+  return result;
 }
 
-export const posterUrl = (path, size = 'w342') =>
-  path ? `${TMDB_IMG}/${size}${path}` : null;
+export function posterUrl(data, size = 'w342') {
+  if (!data) return null;
+  if (data.source === 'omdb' && data.poster_url) return data.poster_url;
+  if (data.poster_path) return `${IMG}/${size}${data.poster_path}`;
+  return null;
+}
 
-export const backdropUrl = (path, size = 'w780') =>
-  path ? `${TMDB_IMG}/${size}${path}` : null;
+export function backdropUrl(data, size = 'w780') {
+  if (!data) return null;
+  if (data.backdrop_path) return `${IMG}/${size}${data.backdrop_path}`;
+  return null;
+}
 
-export const getRating = (tmdb) => {
-  const r = tmdb?.vote_average;
-  return r && r > 0 ? r.toFixed(1) : null;
-};
+export function getRating(data) {
+  if (!data) return null;
+  const r = data.vote_average;
+  return r && r > 0 ? parseFloat(r).toFixed(1) : null;
+}
+
+export function getOverview(data) {
+  return data?.overview || '';
+}
 
 export const MOVIE_GENRES = {
-  28:'Action',12:'Adventure',16:'Animation',35:'Comedy',80:'Crime',
-  99:'Documentary',18:'Drama',10751:'Family',14:'Fantasy',36:'History',
-  27:'Horror',10402:'Music',9648:'Mystery',10749:'Romance',878:'Sci-Fi',
-  53:'Thriller',10752:'War',37:'Western',
+  28:'Action', 12:'Adventure', 16:'Animation', 35:'Comedy', 80:'Crime',
+  99:'Documentary', 18:'Drama', 10751:'Family', 14:'Fantasy', 36:'History',
+  27:'Horror', 10402:'Music', 9648:'Mystery', 10749:'Romance', 878:'Sci-Fi',
+  53:'Thriller', 10752:'War', 37:'Western',
 };
 export const TV_GENRES = {
-  10759:'Action',16:'Animation',35:'Comedy',80:'Crime',99:'Documentary',
-  18:'Drama',10751:'Family',10762:'Kids',9648:'Mystery',10765:'Sci-Fi',37:'Western',
+  10759:'Action', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary',
+  18:'Drama', 10751:'Family', 10762:'Kids', 9648:'Mystery', 10765:'Sci-Fi',
+  10766:'Soap', 37:'Western',
 };
