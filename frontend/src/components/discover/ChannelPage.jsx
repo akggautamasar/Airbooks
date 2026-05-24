@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { ArrowLeft, Film, Music, Image, FileText, BookOpen, Search,
          Play, ExternalLink } from 'lucide-react';
+import ScanProgress from '../ui/ScanProgress';
 import { api } from '../../utils/api';
 import { useApp } from '../../store/AppContext';
 
@@ -251,6 +252,7 @@ export default function ChannelPage({ channel, source, onBack }) {
   const [viewerFile, setViewerFile] = useState(null);
   const [scannedAt, setScannedAt] = useState(null);
   const [forceRef, setForceRef] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const fileCache = useRef({});
 
   useEffect(() => {
@@ -262,17 +264,37 @@ export default function ChannelPage({ channel, source, onBack }) {
       return;
     }
     setLoading(true); setFiles([]);
-    const load = source === 'discover'
-      ? api.getChannelFiles(channel.str_id||String(channel.id), tab)
-      : api.getChatFiles(channel.id, tab, forceRef);
-    load.then(r => {
-      const f = r.files||[];
-      fileCache.current[cacheKey] = f;
-      setFiles(f);
-      if (r.scanned_at) setScannedAt(r.scanned_at);
-    }).catch(()=>{}).finally(()=>setLoading(false));
+    if (source === 'user' && !fileCache.current[cacheKey]) {
+      // Use SSE scan progress for user chats
+      setScanning(true);
+    } else {
+      // Discover or cached — fetch directly
+      const load = source === 'discover'
+        ? api.getChannelFiles(channel.str_id||String(channel.id), tab)
+        : api.getChatFiles(channel.id, tab, forceRef);
+      load.then(r => {
+        const f = r.files||[];
+        fileCache.current[cacheKey] = f;
+        setFiles(f);
+        if (r.scanned_at) setScannedAt(r.scanned_at);
+      }).catch(()=>{}).finally(()=>setLoading(false));
+    }
     setForceRef(false);
   }, [tab, channel.id, forceRef]);
+
+  // Called when SSE scan completes
+  async function onScanDone(data) {
+    setScanning(false);
+    // Now fetch the actual typed files
+    try {
+      const r = await api.getChatFiles(channel.id, tab, false);
+      const f = r.files||[];
+      fileCache.current[`${channel.id}_${tab}`] = f;
+      setFiles(f);
+      if (r.scanned_at || data?.scanned_at) setScannedAt(r.scanned_at || data?.scanned_at);
+    } catch {}
+    setLoading(false);
+  }
 
   const sorted = useMemo(() => {
     let f = files.filter(f =>
@@ -349,6 +371,19 @@ export default function ChannelPage({ channel, source, onBack }) {
           })}
         </div>
       </div>
+
+      {/* Scan progress — shown during first scan */}
+      {scanning && source === 'user' && (
+        <div style={{ padding:'0 16px' }}>
+          <ScanProgress
+            chatId={channel.id}
+            source={source}
+            forceRefresh={forceRef}
+            onDone={onScanDone}
+            color={tabInfo?.color || '#3478f6'}
+          />
+        </div>
+      )}
 
       {/* Content */}
       <div style={{ flex:1, overflowY:'auto', padding:'0 16px 100px' }}>
