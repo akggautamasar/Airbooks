@@ -617,3 +617,122 @@ async def health():
         "has_session": get_discover_client() is not None,
         "photo_cache_size": len(_photo_cache),
     }
+
+
+# ─── SSE Scan Progress ────────────────────────────────────────────────────────
+
+async def _build_file_entry(msg, chat_id: int) -> dict | None:
+    """Extract file metadata from a message."""
+    media = (getattr(msg,"document",None) or getattr(msg,"video",None) or getattr(msg,"audio",None))
+    if not media:
+        if msg.photo:
+            return {"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+                    "channel_id": chat_id, "name": f"photo_{msg.id}.jpg",
+                    "type": "image", "mime": "image/jpeg", "size": 0,
+                    "date": msg.date.timestamp() if msg.date else 0,
+                    "caption": msg.caption or "", "has_thumb": True}
+        return None
+    mime  = getattr(media,"mime_type","") or ""
+    fname = getattr(media,"file_name","") or f"file_{msg.id}"
+    ftype = media_type(mime, fname)
+    if ftype == "other":
+        return None
+    return {"id": f"{chat_id}_{msg.id}", "msg_id": msg.id,
+            "channel_id": chat_id, "name": fname, "type": ftype, "mime": mime,
+            "size": getattr(media,"file_size",0),
+            "date": msg.date.timestamp() if msg.date else 0,
+            "caption": msg.caption or "",
+            "duration": getattr(media,"duration",None),
+            "has_thumb": bool(getattr(media,"thumbs",None))}
+
+
+@app.get("/api/chats/{chat_id}/scan-progress")
+async def scan_progress(chat_id: int, refresh: bool = False,
+                        request: Request = None,
+                        user: dict = Depends(require_auth)):
+    """
+    SSE endpoint — streams real-time scan progress.
+    Emits JSON events: {msg, scanned, rate, elapsed, done, from_cache, channel_name}
+    """
+    import time
+    from fastapi.responses import StreamingResponse as SR
+
+    chat_id_str = str(chat_id)
+
+    # Already cached and not refreshing → instant done
+    if not refresh and chat_id_str in file_cache:
+        cached = file_cache[chat_id_str]
+        async def instant():
+            data = json.dumps({
+                "msg": 0, "scanned": cached.get("file_count", len(cached.get("files", []))),
+                "rate": 0, "elapsed": 0, "done": True, "from_cache": True,
+                "channel_name": cached.get("channel_name", ""),
+                "scanned_at": cached.get("scanned_at", ""),
+            })
+            yield f"data: {data}\n\n"
+        return SR(instant(), media_type="text/event-stream",
+                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                           "Access-Control-Allow-Origin": "*"})
+
+    # Get client
+    sid = user.get("session_id")
+    if not sid or sid not in user_sessions:
+        raise HTTPException(401, "Not authenticated")
+    client = user_sessions[sid]
+
+    async def generator():
+        files = []
+        start = time.time()
+        msg_count = 0
+        file_count = 0
+        last_emit = start
+
+        # Get channel name
+        try:
+            chat_obj = await client.get_chat(chat_id)
+            channel_name = getattr(chat_obj, "title", None) or str(chat_id)
+        except Exception:
+            channel_name = str(chat_id)
+
+        # Initial event
+        yield f"data: {json.dumps({'msg':0,'scanned':0,'rate':0,'elapsed':0,'done':False,'channel_name':channel_name})}\n\n"
+
+        async for msg in client.get_chat_history(chat_id):
+            if request and await request.is_disconnected():
+                break
+
+            msg_count += 1
+            entry = await _build_file_entry(msg, chat_id)
+            if entry:
+                files.append(entry)
+                file_count += 1
+
+            # Emit update every 200 messages or every 2 seconds
+            now = time.time()
+            if msg_count % 200 == 0 or (now - last_emit) >= 2:
+                elapsed = round(now - start)
+                rate = round(msg_count / elapsed, 1) if elapsed > 0 else 0
+                yield f"data: {json.dumps({'msg':msg_count,'scanned':file_count,'rate':rate,'elapsed':elapsed,'done':False,'channel_name':channel_name})}\n\n"
+                last_emit = now
+
+        # Save to memory cache
+        async with _file_cache_lock:
+            file_cache[chat_id_str] = {
+                "files": files,
+                "scanned_at": datetime.utcnow().isoformat(),
+                "channel_name": channel_name,
+                "file_count": len(files),
+            }
+
+        # Save to Telegram cache in background
+        if config.CACHE_CHANNEL_ID:
+            asyncio.create_task(save_cache(client, chat_id, files, channel_name))
+
+        # Final done event
+        elapsed = round(time.time() - start)
+        rate = round(msg_count / elapsed, 1) if elapsed > 0 else 0
+        yield f"data: {json.dumps({'msg':msg_count,'scanned':len(files),'rate':rate,'elapsed':elapsed,'done':True,'channel_name':channel_name,'scanned_at':datetime.utcnow().isoformat()})}\n\n"
+
+    return SR(generator(), media_type="text/event-stream",
+              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                       "Access-Control-Allow-Origin": "*"})
